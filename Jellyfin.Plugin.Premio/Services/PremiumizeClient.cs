@@ -4,7 +4,6 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Jellyfin.Plugin.Premio.Configuration;
 using Jellyfin.Plugin.Premio.Models;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +14,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 /// Injected via <see cref="IHttpClientFactory"/> (registered in
 /// <see cref="Jellyfin.Plugin.Premio.ServiceRegistrator"/>).
 /// </summary>
-public sealed class PremiumizeClient
+public sealed partial class PremiumizeClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<PremiumizeClient> _logger;
@@ -33,7 +32,7 @@ public sealed class PremiumizeClient
         _http   = httpClient;
         _logger = logger;
 
-        var config = Plugin.Instance?.Configuration;
+        var config = PremioPlugin.Instance?.Configuration;
         var baseUrl = config?.ApiBaseUrl ?? "https://www.premiumize.me/api";
         var timeoutSecs = config?.RequestTimeoutSeconds ?? 30;
 
@@ -46,12 +45,12 @@ public sealed class PremiumizeClient
     // Private helpers
     // -------------------------------------------------------------------------
 
-    private string ApiKey =>
-        Plugin.Instance?.Configuration?.ApiKey
+    private static string ApiKey =>
+        PremioPlugin.Instance?.Configuration?.ApiKey
         ?? throw new InvalidOperationException("Premio: API key is not configured.");
 
     /// <summary>Appends the API key to any query string.</summary>
-    private string WithKey(string relativeUrl) =>
+    private static string WithKey(string relativeUrl) =>
         relativeUrl.Contains('?', StringComparison.Ordinal)
             ? $"{relativeUrl}&apikey={Uri.EscapeDataString(ApiKey)}"
             : $"{relativeUrl}?apikey={Uri.EscapeDataString(ApiKey)}";
@@ -61,7 +60,7 @@ public sealed class PremiumizeClient
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Searches the authenticated user''s Premiumize cloud storage.
+    /// Searches the authenticated user's Premiumize cloud storage.
     /// Maps to <c>GET /folder/search?q=…</c>.
     /// </summary>
     /// <param name="query">Search term.</param>
@@ -79,7 +78,7 @@ public sealed class PremiumizeClient
         ArgumentException.ThrowIfNullOrWhiteSpace(query);
 
         var url = WithKey($"folder/search?q={Uri.EscapeDataString(query)}");
-        _logger.LogDebug("Premio: Searching for '{Query}'", query);
+        LogSearching(_logger, query);
 
         var response = await _http
             .GetFromJsonAsync<PremiumizeResponse<PremiumizeSearchContent>>(url, cancellationToken)
@@ -106,7 +105,7 @@ public sealed class PremiumizeClient
         ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
 
         var url = WithKey($"item/details?id={Uri.EscapeDataString(itemId)}");
-        _logger.LogDebug("Premio: Fetching item details for '{ItemId}'", itemId);
+        LogFetchingItemDetails(_logger, itemId);
 
         var response = await _http
             .GetFromJsonAsync<PremiumizeResponse<PremiumizeItemDetails>>(url, cancellationToken)
@@ -141,7 +140,7 @@ public sealed class PremiumizeClient
                 $"No stream URL available for item '{itemId}'.");
         }
 
-        _logger.LogInformation("Premio: Resolved stream URL for item '{ItemId}'", itemId);
+        LogResolvedStreamUrl(_logger, itemId);
         return url;
     }
 
@@ -163,6 +162,19 @@ public sealed class PremiumizeClient
                 response.Message ?? "Unknown API error.");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // LoggerMessage delegates (CA1848)
+    // -------------------------------------------------------------------------
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Searching for '{Query}'")]
+    private static partial void LogSearching(ILogger logger, string query);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Fetching item details for '{ItemId}'")]
+    private static partial void LogFetchingItemDetails(ILogger logger, string itemId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Resolved stream URL for item '{ItemId}'")]
+    private static partial void LogResolvedStreamUrl(ILogger logger, string itemId);
 }
 
 /// <summary>
@@ -174,8 +186,40 @@ public sealed class PremiumizeApiException : Exception
     public string Endpoint { get; }
 
     /// <summary>
-    /// Initialises a new <see cref="PremiumizeApiException"/>.
+    /// Initialises a new default instance of <see cref="PremiumizeApiException"/>.
     /// </summary>
+    public PremiumizeApiException()
+        : base("An error occurred communicating with the Premiumize API.")
+    {
+        Endpoint = string.Empty;
+    }
+
+    /// <summary>
+    /// Initialises a new instance of <see cref="PremiumizeApiException"/> with a message.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    public PremiumizeApiException(string message)
+        : base(message)
+    {
+        Endpoint = string.Empty;
+    }
+
+    /// <summary>
+    /// Initialises a new instance of <see cref="PremiumizeApiException"/> with a message and inner exception.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    /// <param name="innerException">The exception that caused this exception.</param>
+    public PremiumizeApiException(string message, Exception innerException)
+        : base(message, innerException)
+    {
+        Endpoint = string.Empty;
+    }
+
+    /// <summary>
+    /// Initialises a new instance of <see cref="PremiumizeApiException"/>.
+    /// </summary>
+    /// <param name="endpoint">The API endpoint that returned the error.</param>
+    /// <param name="message">The error message returned by the API.</param>
     public PremiumizeApiException(string endpoint, string message)
         : base($"Premiumize API error at '{endpoint}': {message}")
     {

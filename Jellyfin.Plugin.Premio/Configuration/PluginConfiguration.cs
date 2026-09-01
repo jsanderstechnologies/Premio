@@ -26,6 +26,10 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// Gets or sets the base URL for the Premiumize v2 API.
     /// Override only if you are running behind a reverse proxy.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Design",
+        "CA1056:URI-like properties should not be strings",
+        Justification = "Configuration property serialized as XML by Jellyfin; System.Uri is not round-trippable by the host serializer.")]
     public string ApiBaseUrl { get; set; } = "https://www.premiumize.me/api";
 
     /// <summary>

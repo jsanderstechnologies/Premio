@@ -30,9 +30,11 @@ public sealed class PremiumizeResponse<T>
 /// <summary>Represents a single item in a Premiumize cloud search result.</summary>
 public sealed class PremiumizeSearchItem
 {
+    /// <summary>Gets the unique Premiumize item identifier.</summary>
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
+    /// <summary>Gets the display name of the item.</summary>
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 
@@ -40,15 +42,19 @@ public sealed class PremiumizeSearchItem
     [JsonPropertyName("type")]
     public string Type { get; init; } = string.Empty;
 
+    /// <summary>Gets the MIME type of the item, if available.</summary>
     [JsonPropertyName("mime_type")]
     public string? MimeType { get; init; }
 
+    /// <summary>Gets the size of the item in bytes.</summary>
     [JsonPropertyName("size")]
     public long Size { get; init; }
 
+    /// <summary>Gets the Unix timestamp (seconds) when the item was created.</summary>
     [JsonPropertyName("created_at")]
     public long CreatedAt { get; init; }
 
+    /// <summary>Gets the ID of the parent folder, if applicable.</summary>
     [JsonPropertyName("folder_id")]
     public string? FolderId { get; init; }
 }
@@ -56,6 +62,7 @@ public sealed class PremiumizeSearchItem
 /// <summary>Payload for the <c>/folder/search</c> endpoint.</summary>
 public sealed class PremiumizeSearchContent
 {
+    /// <summary>Gets the list of files matching the search query.</summary>
     [JsonPropertyName("files")]
     public IReadOnlyList<PremiumizeSearchItem> Files { get; init; } = [];
 }
@@ -63,18 +70,23 @@ public sealed class PremiumizeSearchContent
 /// <summary>Payload for the <c>/item/details</c> endpoint.</summary>
 public sealed class PremiumizeItemDetails
 {
+    /// <summary>Gets the unique Premiumize item identifier.</summary>
     [JsonPropertyName("id")]
     public string Id { get; init; } = string.Empty;
 
+    /// <summary>Gets the display name of the item.</summary>
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 
+    /// <summary>Gets the item type, e.g. <c>"file"</c> or <c>"folder"</c>.</summary>
     [JsonPropertyName("type")]
     public string Type { get; init; } = string.Empty;
 
+    /// <summary>Gets the size of the item in bytes.</summary>
     [JsonPropertyName("size")]
     public long Size { get; init; }
 
+    /// <summary>Gets the MIME type of the item, if available.</summary>
     [JsonPropertyName("mime_type")]
     public string? MimeType { get; init; }
 

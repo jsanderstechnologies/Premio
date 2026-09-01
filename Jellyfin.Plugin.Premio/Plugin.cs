@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.Premio;
 /// The Premio Jellyfin plugin entry point.
 /// Jellyfin discovers this class automatically via the <see cref="IPlugin"/> interface.
 /// </summary>
-public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
+public sealed class PremioPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     /// <summary>
     /// A stable GUID that uniquely identifies this plugin across every Jellyfin
@@ -31,14 +31,14 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         "Search and stream content via Premiumize from within Jellyfin.";
 
     /// <summary>Gets the singleton instance populated during plugin initialisation.</summary>
-    public static Plugin? Instance { get; private set; }
+    public static PremioPlugin? Instance { get; private set; }
 
     /// <summary>
-    /// Initialises a new instance of <see cref="Plugin"/>.
+    /// Initialises a new instance of <see cref="PremioPlugin"/>.
     /// </summary>
     /// <param name="applicationPaths">Jellyfin application path provider (injected by host).</param>
     /// <param name="xmlSerializer">XML serialiser for plugin configuration (injected by host).</param>
-    public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
+    public PremioPlugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
