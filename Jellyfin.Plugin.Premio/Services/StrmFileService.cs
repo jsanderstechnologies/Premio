@@ -144,7 +144,7 @@ public sealed partial class StrmFileService
     /// <returns>
     /// The URL stored in the file, or <see langword="null"/> if the file does not exist.
     /// </returns>
-    public async Task<string?> ReadStrmFileAsync(
+    public static async Task<string?> ReadStrmFileAsync(
         string relativePath,
         CancellationToken cancellationToken = default)
     {
