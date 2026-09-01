@@ -13,7 +13,7 @@ from [Premiumize.me](https://www.premiumize.me) cloud storage using `.strm` file
 
 | Requirement | Version |
 |---|---|
-| .NET SDK | 8.0 |
+| .NET SDK | 9.0 |
 | Jellyfin | **10.11.11** |
 | Premiumize API key | — |
 
