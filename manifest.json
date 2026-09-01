@@ -10,13 +10,12 @@
     "versions": [
       {
         "version": "1.0.0.0",
-        "changelog": "Initial release — search, stream URL resolution, and .strm file management.",
+        "changelog": "See https://github.com/jsanderstechnologies/Premio/releases/tag/v1.0.0.0",
         "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/jsanderstechnologies/Premio/releases/download/v1.0.0/Jellyfin.Plugin.Premio_1.0.0.0.zip",
-        "checksum": "PLACEHOLDER_UPDATE_ON_FIRST_RELEASE",
-        "timestamp": "2026-09-01T10:05:00Z"
+        "sourceUrl": "https://github.com/jsanderstechnologies/Premio/releases/download/v1.0.0.0/Jellyfin.Plugin.Premio_1.0.0.0.zip",
+        "checksum": "c744bc7f85980d2b7ab2eeb6b16ef6e72ca192e3f6e57453b856d2437d152cbf",
+        "timestamp": "2026-09-01T18:05:39Z"
       }
     ]
   }
 ]
-
