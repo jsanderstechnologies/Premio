@@ -1,0 +1,171 @@
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Plugin.Premio.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.Premio.Services;
+
+/// <summary>
+/// Manages the creation, update, and deletion of <c>.strm</c> files on disk.
+/// A <c>.strm</c> file is a plain-text file that Jellyfin treats as a media
+/// item whose single line of content is a remote stream URL.
+/// </summary>
+public sealed class StrmFileService
+{
+    private readonly ILogger<StrmFileService> _logger;
+
+    /// <summary>
+    /// Initialises a new <see cref="StrmFileService"/>.
+    /// </summary>
+    /// <param name="logger">Logger injected by the host.</param>
+    public StrmFileService(ILogger<StrmFileService> logger)
+    {
+        _logger = logger;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    private PluginConfiguration Config =>
+        Plugin.Instance?.Configuration
+        ?? throw new InvalidOperationException("Premio: Plugin configuration is not available.");
+
+    // -------------------------------------------------------------------------
+    // Public methods
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Writes (or overwrites) a <c>.strm</c> file containing <paramref name="streamUrl"/>.
+    /// The file is placed under <see cref="PluginConfiguration.StrmOutputDirectory"/>
+    /// using <paramref name="relativePath"/> (which may include sub-directories).
+    /// </summary>
+    /// <param name="relativePath">
+    /// Path relative to <see cref="PluginConfiguration.StrmOutputDirectory"/>.
+    /// Do <em>not</em> include the <c>.strm</c> extension — it is appended automatically.
+    /// Example: <c>Movies/The Matrix (1999)</c>
+    /// </param>
+    /// <param name="streamUrl">The absolute HTTP(S) URL to write into the file.</param>
+    /// <param name="cancellationToken">Propagates notification that the operation should be cancelled.</param>
+    /// <returns>The absolute path of the written file.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="relativePath"/> or <paramref name="streamUrl"/> is
+    /// null or whitespace, or when <see cref="PluginConfiguration.StrmOutputDirectory"/>
+    /// is not configured.
+    /// </exception>
+    public async Task<string> WriteStrmFileAsync(
+        string relativePath,
+        string streamUrl,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(streamUrl);
+
+        var outputDir = Config.StrmOutputDirectory;
+        if (string.IsNullOrWhiteSpace(outputDir))
+        {
+            throw new InvalidOperationException(
+                "Premio: StrmOutputDirectory is not configured. " +
+                "Set it in the plugin settings before writing .strm files.");
+        }
+
+        // Normalise path separators and append .strm extension.
+        var safeRelative  = relativePath.Replace('/', Path.DirectorySeparatorChar)
+                                        .Replace('\\', Path.DirectorySeparatorChar);
+        var absolutePath  = Path.Combine(outputDir, safeRelative + ".strm");
+
+        // Skip if the file already exists and overwrite is disabled.
+        if (File.Exists(absolutePath) && !Config.OverwriteExistingStrmFiles)
+        {
+            _logger.LogDebug(
+                "Premio: Skipping existing .strm file (overwrite disabled): {Path}",
+                absolutePath);
+            return absolutePath;
+        }
+
+        // Ensure the directory tree exists.
+        var directory = Path.GetDirectoryName(absolutePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.WriteAllTextAsync(absolutePath, streamUrl, cancellationToken)
+                  .ConfigureAwait(false);
+
+        _logger.LogInformation("Premio: Wrote .strm file: {Path}", absolutePath);
+        return absolutePath;
+    }
+
+    /// <summary>
+    /// Deletes a previously written <c>.strm</c> file.
+    /// </summary>
+    /// <param name="relativePath">
+    /// The same relative path used when calling <see cref="WriteStrmFileAsync"/>
+    /// (without the <c>.strm</c> extension).
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> if the file was deleted;
+    /// <see langword="false"/> if it did not exist.
+    /// </returns>
+    public bool DeleteStrmFile(string relativePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+
+        var outputDir = Config.StrmOutputDirectory;
+        if (string.IsNullOrWhiteSpace(outputDir))
+        {
+            return false;
+        }
+
+        var safeRelative = relativePath.Replace('/', Path.DirectorySeparatorChar)
+                                       .Replace('\\', Path.DirectorySeparatorChar);
+        var absolutePath = Path.Combine(outputDir, safeRelative + ".strm");
+
+        if (!File.Exists(absolutePath))
+        {
+            return false;
+        }
+
+        File.Delete(absolutePath);
+        _logger.LogInformation("Premio: Deleted .strm file: {Path}", absolutePath);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the stream URL stored inside an existing <c>.strm</c> file.
+    /// </summary>
+    /// <param name="relativePath">
+    /// The relative path of the file (without the <c>.strm</c> extension).
+    /// </param>
+    /// <param name="cancellationToken">Propagates notification that the operation should be cancelled.</param>
+    /// <returns>
+    /// The URL stored in the file, or <see langword="null"/> if the file does not exist.
+    /// </returns>
+    public async Task<string?> ReadStrmFileAsync(
+        string relativePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+
+        var outputDir = Config.StrmOutputDirectory;
+        if (string.IsNullOrWhiteSpace(outputDir))
+        {
+            return null;
+        }
+
+        var safeRelative = relativePath.Replace('/', Path.DirectorySeparatorChar)
+                                       .Replace('\\', Path.DirectorySeparatorChar);
+        var absolutePath = Path.Combine(outputDir, safeRelative + ".strm");
+
+        if (!File.Exists(absolutePath))
+        {
+            return null;
+        }
+
+        return await File.ReadAllTextAsync(absolutePath, cancellationToken)
+                         .ConfigureAwait(false);
+    }
+}

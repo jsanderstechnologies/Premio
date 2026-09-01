@@ -1,0 +1,32 @@
+# Build output
+bin/
+obj/
+out/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+*.snupkg
+project.lock.json
+project.nuget.cache
+packages/
+.nuget/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Test results
+TestResults/
+coverage/
+
+# Publish profiles
+**/Properties/PublishProfiles/

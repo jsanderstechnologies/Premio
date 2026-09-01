@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Jellyfin.Plugin.Premio</AssemblyName>
+    <RootNamespace>Jellyfin.Plugin.Premio</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisMode>All</AnalysisMode>
+    <LangVersion>latest</LangVersion>
+    <Version>1.0.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Authors>Premio Plugin Authors</Authors>
+    <Description>Jellyfin backend search and stream plugin for Premiumize.</Description>
+    <Copyright>Copyright © 2026</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pin Jellyfin NuGet packages to 10.11.11.
+      All Jellyfin.* packages MUST share the same version to avoid assembly mismatches.
+    -->
+    <PackageReference Include="Jellyfin.Model"            Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Controller"       Version="10.11.11" />
+
+    <!-- Typed HttpClient factory -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1"    />
+
+    <!-- Pinned System.Text.Json matching Jellyfin 10.11.x runtime -->
+    <PackageReference Include="System.Text.Json"          Version="8.0.5"    />
+  </ItemGroup>
+
+</Project>
