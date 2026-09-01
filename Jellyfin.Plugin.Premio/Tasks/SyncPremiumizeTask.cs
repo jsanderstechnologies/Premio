@@ -128,7 +128,7 @@ public sealed partial class SyncPremiumizeTask : IScheduledTask
         [
             new TaskTriggerInfo
             {
-                Type = "IntervalTrigger",
+                Type = TaskTriggerInfoType.IntervalTrigger,
                 IntervalTicks = TimeSpan.FromHours(6).Ticks
             }
         ];

@@ -192,7 +192,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }, cancellationToken);
         }
 
-        return Task.FromResult(new QueryResult<BaseItemDto>(existingItems.ToArray(), existingItems.Count));
+        return Task.FromResult(new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems));
     }
 
     private static Guid GenerateDeterministicGuid(string id)
