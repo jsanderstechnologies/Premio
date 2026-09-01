@@ -96,7 +96,7 @@ jobs:
               changelog: "See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}",
               targetAbi: "10.11.11.0",
               sourceUrl: $url,
-              checksum:  $cs,
+              checksum:  $md5,
               timestamp: $ts
           }' manifest.json > manifest_updated.json
           mv manifest_updated.json manifest.json
