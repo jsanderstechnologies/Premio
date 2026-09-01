@@ -28,15 +28,20 @@ Jellyfin.Plugin.Premio/
 │   ├── PluginConfiguration.cs   # Serialised plugin settings (XML)
 │   └── configPage.html          # Admin dashboard configuration UI
 │
+├── Controllers/
+│   └── PremioController.cs      # REST API for TMDB discovery, Torrentio streams, & library add
+│
 ├── Models/
 │   ├── PremiumizeModels.cs      # Premiumize v2 API response DTOs
-│   └── TmdbModels.cs            # TheMovieDb API response DTOs
+│   ├── TmdbModels.cs            # TheMovieDb API response DTOs
+│   └── TorrentioModels.cs       # Torrentio streams & magnet response DTOs
 │
 ├── Services/
 │   ├── PremiumizeClient.cs      # Typed HttpClient for the Premiumize REST API
 │   ├── SearchActionFilter.cs    # ASP.NET Core Action Filter intercepting search
 │   ├── StrmFileService.cs       # .strm file and poster image management
-│   └── TmdbClient.cs            # Typed HttpClient for TMDB search & poster retrieval
+│   ├── TmdbClient.cs            # Typed HttpClient for TMDB search & poster retrieval
+│   └── TorrentioClient.cs       # Typed HttpClient for Torrentio stream lookups
 │
 ├── Tasks/
 │   └── SyncPremiumizeTask.cs    # IScheduledTask background cloud synchroniser

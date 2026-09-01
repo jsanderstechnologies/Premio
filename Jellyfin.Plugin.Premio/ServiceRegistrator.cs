@@ -20,6 +20,7 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
         // Typed HttpClients — lifetime managed by IHttpClientFactory.
         serviceCollection.AddHttpClient<PremiumizeClient>();
         serviceCollection.AddHttpClient<TmdbClient>();
+        serviceCollection.AddHttpClient<TorrentioClient>();
 
         // Singleton that manages .strm file creation and lifecycle.
         serviceCollection.AddSingleton<StrmFileService>();

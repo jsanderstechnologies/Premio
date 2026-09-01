@@ -27,7 +27,7 @@ public sealed class TmdbSearchResponse
 }
 
 /// <summary>
-/// Represents a movie or TV show item returned by TMDB.
+/// Represents a movie or TV show item returned by TMDB search.
 /// </summary>
 public sealed class TmdbItem
 {
@@ -96,5 +96,108 @@ public sealed class TmdbItem
     [JsonIgnore]
     public string? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
         ? $"https://image.tmdb.org/t/p/w500{PosterPath}"
+        : null;
+
+    /// <summary>
+    /// Gets the absolute backdrop URL.
+    /// </summary>
+    [JsonIgnore]
+    public string? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
+        ? $"https://image.tmdb.org/t/p/w1280{BackdropPath}"
+        : null;
+}
+
+/// <summary>
+/// External IDs associated with a TMDB media item.
+/// </summary>
+public sealed class TmdbExternalIds
+{
+    /// <summary>Gets the IMDB ID (e.g. "tt0093058").</summary>
+    [JsonPropertyName("imdb_id")]
+    public string? ImdbId { get; init; }
+}
+
+/// <summary>
+/// Detailed metadata for a single movie or TV show.
+/// </summary>
+public sealed class TmdbDetailedItem
+{
+    /// <summary>Gets the TMDB ID.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    /// <summary>Gets the IMDB ID.</summary>
+    [JsonPropertyName("imdb_id")]
+    public string? ImdbId { get; set; }
+
+    /// <summary>Gets the movie title.</summary>
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    /// <summary>Gets the TV show name.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    /// <summary>Gets the overview description.</summary>
+    [JsonPropertyName("overview")]
+    public string? Overview { get; init; }
+
+    /// <summary>Gets the poster path.</summary>
+    [JsonPropertyName("poster_path")]
+    public string? PosterPath { get; init; }
+
+    /// <summary>Gets the backdrop path.</summary>
+    [JsonPropertyName("backdrop_path")]
+    public string? BackdropPath { get; init; }
+
+    /// <summary>Gets the release date string.</summary>
+    [JsonPropertyName("release_date")]
+    public string? ReleaseDate { get; init; }
+
+    /// <summary>Gets the first air date string.</summary>
+    [JsonPropertyName("first_air_date")]
+    public string? FirstAirDate { get; init; }
+
+    /// <summary>Gets the runtime in minutes.</summary>
+    [JsonPropertyName("runtime")]
+    public int? Runtime { get; init; }
+
+    /// <summary>Gets the number of seasons (for TV shows).</summary>
+    [JsonPropertyName("number_of_seasons")]
+    public int? NumberOfSeasons { get; init; }
+
+    /// <summary>Gets the number of episodes (for TV shows).</summary>
+    [JsonPropertyName("number_of_episodes")]
+    public int? NumberOfEpisodes { get; init; }
+
+    /// <summary>Gets the external IDs container if embedded in response.</summary>
+    [JsonPropertyName("external_ids")]
+    public TmdbExternalIds? ExternalIds { get; init; }
+
+    /// <summary>Gets the resolved display title.</summary>
+    [JsonIgnore]
+    public string DisplayTitle => !string.IsNullOrWhiteSpace(Title) ? Title : (Name ?? string.Empty);
+
+    /// <summary>Gets the release year.</summary>
+    [JsonIgnore]
+    public string? Year
+    {
+        get
+        {
+            var date = !string.IsNullOrWhiteSpace(ReleaseDate) ? ReleaseDate : FirstAirDate;
+            return !string.IsNullOrWhiteSpace(date) && date.Length >= 4 ? date[..4] : null;
+        }
+    }
+
+    /// <summary>Gets the full poster URL.</summary>
+    [JsonIgnore]
+    public string? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
+        ? $"https://image.tmdb.org/t/p/w500{PosterPath}"
+        : null;
+
+    /// <summary>Gets the full backdrop URL.</summary>
+    [JsonIgnore]
+    public string? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
+        ? $"https://image.tmdb.org/t/p/w1280{BackdropPath}"
         : null;
 }

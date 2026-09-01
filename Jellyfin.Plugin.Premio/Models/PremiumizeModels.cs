@@ -59,7 +59,6 @@ public sealed class PremiumizeSearchItem
     public string? FolderId { get; init; }
 }
 
-
 /// <summary>Payload for the <c>/item/details</c> endpoint.</summary>
 public sealed class PremiumizeItemDetails
 {
@@ -90,4 +89,64 @@ public sealed class PremiumizeItemDetails
     /// <summary>Permanent stream link (if available).</summary>
     [JsonPropertyName("stream_link")]
     public string? StreamLink { get; init; }
+}
+
+/// <summary>Response returned by the <c>/directdl/create</c> endpoint.</summary>
+public sealed class PremiumizeDirectDlResponse
+{
+    /// <summary>Gets the status of the directdl request.</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Gets the error message if status is not success.</summary>
+    [JsonPropertyName("message")]
+    public string? Message { get; init; }
+
+    /// <summary>Gets the direct download/stream link when resolving a single file.</summary>
+    [JsonPropertyName("location")]
+    public string? Location { get; init; }
+
+    /// <summary>Gets the filename of the single file resolved.</summary>
+    [JsonPropertyName("filename")]
+    public string? Filename { get; init; }
+
+    /// <summary>Gets the total size in bytes.</summary>
+    [JsonPropertyName("filesize")]
+    public long? Filesize { get; init; }
+
+    /// <summary>Gets the list of contained files for multi-file torrents.</summary>
+    [JsonPropertyName("content")]
+    public IReadOnlyList<PremiumizeDirectDlFile>? Content { get; init; }
+}
+
+/// <summary>Represents a single file within a DirectDL response.</summary>
+public sealed class PremiumizeDirectDlFile
+{
+    /// <summary>Gets the relative path of the file inside the torrent.</summary>
+    [JsonPropertyName("path")]
+    public string Path { get; init; } = string.Empty;
+
+    /// <summary>Gets the size of the file in bytes.</summary>
+    [JsonPropertyName("size")]
+    public long Size { get; init; }
+
+    /// <summary>Gets the direct download link for this file.</summary>
+    [JsonPropertyName("link")]
+    public string? Link { get; init; }
+
+    /// <summary>Gets the transcoded/direct stream link for this file.</summary>
+    [JsonPropertyName("stream_link")]
+    public string? StreamLink { get; init; }
+}
+
+/// <summary>Response from the Premiumize <c>/cache/check</c> endpoint.</summary>
+public sealed class PremiumizeCacheCheckResponse
+{
+    /// <summary>Gets the status of the cache check.</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Gets boolean results corresponding to the queried hashes.</summary>
+    [JsonPropertyName("response")]
+    public IReadOnlyList<bool>? Response { get; init; }
 }

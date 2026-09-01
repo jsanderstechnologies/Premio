@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading;
@@ -92,6 +94,81 @@ public sealed partial class PremiumizeClient
     }
 
     /// <summary>
+    /// Checks which torrent infohashes are instantly cached in Premiumize cloud.
+    /// </summary>
+    /// <param name="infoHashes">List of torrent infohashes.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of boolean flags corresponding to each hash.</returns>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Cache check failures are non-fatal.")]
+    public async Task<IReadOnlyList<bool>> CheckCacheAsync(
+        IEnumerable<string> infoHashes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(infoHashes);
+
+        var hashList = infoHashes.ToList();
+        if (hashList.Count == 0)
+        {
+            return [];
+        }
+
+        try
+        {
+            var queryParams = string.Join("&", hashList.Select(h => $"items[]={Uri.EscapeDataString(h)}"));
+            var url = WithKey($"cache/check?{queryParams}");
+
+            var response = await _http
+                .GetFromJsonAsync<PremiumizeCacheCheckResponse>(url, cancellationToken)
+                .ConfigureAwait(false);
+
+            return response?.Response ?? [];
+        }
+        catch (Exception ex)
+        {
+            LogCacheCheckFailed(_logger, ex.Message);
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Resolves direct download and streaming URLs for a magnet link or infohash using <c>POST /directdl/create</c>.
+    /// </summary>
+    /// <param name="magnetOrHash">Magnet link or infohash.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>DirectDL response containing direct streaming links.</returns>
+    public async Task<PremiumizeDirectDlResponse> CreateDirectDownloadAsync(
+        string magnetOrHash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(magnetOrHash);
+
+        var url = WithKey("directdl/create");
+        LogCreatingDirectDl(_logger);
+
+        using var formContent = new FormUrlEncodedContent(
+        [
+            new KeyValuePair<string, string>("src", magnetOrHash)
+        ]);
+
+        var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
+                                      .ConfigureAwait(false);
+
+        httpResponse.EnsureSuccessStatusCode();
+
+        var result = await httpResponse.Content.ReadFromJsonAsync<PremiumizeDirectDlResponse>(cancellationToken: cancellationToken)
+                                       .ConfigureAwait(false);
+
+        if (result is null || !string.Equals(result.Status, "success", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PremiumizeApiException(
+                "directdl/create",
+                result?.Message ?? "Direct download resolution failed.");
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Retrieves detailed metadata (including a streaming link) for a single item.
     /// Maps to <c>GET /item/details?id=…</c>.
     /// </summary>
@@ -171,6 +248,12 @@ public sealed partial class PremiumizeClient
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Searching for '{Query}'")]
     private static partial void LogSearching(ILogger logger, string query);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Creating direct download for torrent/magnet")]
+    private static partial void LogCreatingDirectDl(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Cache check request failed: {ErrorMessage}")]
+    private static partial void LogCacheCheckFailed(ILogger logger, string errorMessage);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Fetching item details for '{ItemId}'")]
     private static partial void LogFetchingItemDetails(ILogger logger, string itemId);

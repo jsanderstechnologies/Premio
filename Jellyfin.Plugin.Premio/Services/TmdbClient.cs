@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
-/// Typed HTTP client for searching The Movie Database (TMDB) API and retrieving metadata and posters.
+/// Typed HTTP client for searching The Movie Database (TMDB) API and retrieving metadata, details, and posters.
 /// </summary>
 public sealed partial class TmdbClient
 {
@@ -76,6 +76,77 @@ public sealed partial class TmdbClient
     }
 
     /// <summary>
+    /// Retrieves full details for a movie or TV show, including external IDs.
+    /// </summary>
+    /// <param name="mediaType"><c>"movie"</c> or <c>"tv"</c>.</param>
+    /// <param name="tmdbId">TMDB identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Detailed item metadata, or null if failed.</returns>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Details lookup errors are non-critical.")]
+    public async Task<TmdbDetailedItem?> GetDetailsAsync(
+        string mediaType,
+        int tmdbId,
+        CancellationToken cancellationToken = default)
+    {
+        var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+        var url = $"{endpoint}/{tmdbId}?api_key={ApiKey}&append_to_response=external_ids";
+
+        try
+        {
+            LogFetchingDetails(_logger, endpoint, tmdbId);
+            var item = await _http
+                .GetFromJsonAsync<TmdbDetailedItem>(url, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (item is not null)
+            {
+                if (string.IsNullOrWhiteSpace(item.ImdbId) && item.ExternalIds?.ImdbId is not null)
+                {
+                    item.ImdbId = item.ExternalIds.ImdbId;
+                }
+            }
+
+            return item;
+        }
+        catch (Exception ex)
+        {
+            LogDetailsFetchFailed(_logger, endpoint, tmdbId, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves the IMDB ID for a movie or TV show from TMDB external IDs endpoint.
+    /// </summary>
+    /// <param name="mediaType"><c>"movie"</c> or <c>"tv"</c>.</param>
+    /// <param name="tmdbId">TMDB item ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>IMDB ID string (e.g. "tt0093058") or null.</returns>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "External ID lookup failures are non-critical.")]
+    public async Task<string?> GetExternalImdbIdAsync(
+        string mediaType,
+        int tmdbId,
+        CancellationToken cancellationToken = default)
+    {
+        var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+        var url = $"{endpoint}/{tmdbId}/external_ids?api_key={ApiKey}";
+
+        try
+        {
+            var ext = await _http
+                .GetFromJsonAsync<TmdbExternalIds>(url, cancellationToken)
+                .ConfigureAwait(false);
+
+            return ext?.ImdbId;
+        }
+        catch (Exception ex)
+        {
+            LogExternalIdFetchFailed(_logger, endpoint, tmdbId, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Downloads image bytes from a given TMDB image URI.
     /// </summary>
     /// <param name="imageUri">Absolute image URI.</param>
@@ -106,8 +177,17 @@ public sealed partial class TmdbClient
     [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Searching TMDB for '{Query}'")]
     private static partial void LogSearchingTmdb(ILogger logger, string query);
 
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Fetching TMDB details for {MediaType} ID {TmdbId}")]
+    private static partial void LogFetchingDetails(ILogger logger, string mediaType, int tmdbId);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: TMDB search failed for query '{Query}': {ErrorMessage}")]
     private static partial void LogTmdbSearchFailed(ILogger logger, string query, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to fetch TMDB details for {MediaType} ID {TmdbId}: {ErrorMessage}")]
+    private static partial void LogDetailsFetchFailed(ILogger logger, string mediaType, int tmdbId, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to fetch external IDs for {MediaType} ID {TmdbId}: {ErrorMessage}")]
+    private static partial void LogExternalIdFetchFailed(ILogger logger, string mediaType, int tmdbId, string errorMessage);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to download poster from '{Uri}': {ErrorMessage}")]
     private static partial void LogImageDownloadFailed(ILogger logger, string uri, string errorMessage);
