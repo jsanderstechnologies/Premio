@@ -27,10 +27,7 @@
     <PackageReference Include="Jellyfin.Controller"       Version="10.11.11" />
 
     <!-- Typed HttpClient factory -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1"    />
-
-    <!-- Pinned System.Text.Json matching Jellyfin 10.11.x runtime -->
-    <PackageReference Include="System.Text.Json"          Version="8.0.5"    />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
   </ItemGroup>
 
 </Project>
