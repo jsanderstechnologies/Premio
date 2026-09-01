@@ -52,7 +52,11 @@ public sealed class PremioPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = Name,
-                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
+                DisplayName = Name,
+                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html",
+                EnableInMainMenu = true,
+                MenuSection = "plugins",
+                MenuIcon = "cloud"
             }
         ];
     }
