@@ -1,0 +1,21 @@
+[
+  {
+    "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Premio",
+    "description": "Search and stream content from your Premiumize cloud storage directly inside Jellyfin. Generates .strm files so Jellyfin treats Premiumize items as native media.",
+    "overview": "Premiumize search and stream integration for Jellyfin.",
+    "owner": "jsanderstechnologies",
+    "category": "General",
+    "imageUrl": "https://raw.githubusercontent.com/jsanderstechnologies/Premio/master/assets/premio-logo.png",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "Initial release — search, stream URL resolution, and .strm file management.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/jsanderstechnologies/Premio/releases/download/v1.0.0/Jellyfin.Plugin.Premio_1.0.0.0.zip",
+        "checksum": "PLACEHOLDER_UPDATE_ON_FIRST_RELEASE",
+        "timestamp": "2026-09-01T10:05:00Z"
+      }
+    ]
+  }
+]

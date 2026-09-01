@@ -1,0 +1,110 @@
+name: Build & Publish
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags:    [ "v*.*.*" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+env:
+  PLUGIN_NAME: Jellyfin.Plugin.Premio
+  DOTNET_VERSION: "8.0.x"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + Test
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build --configuration Release --no-restore
+
+      # Upload the build output so the publish job can use it without rebuilding
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: ${{ env.PLUGIN_NAME }}/bin/Release/net8.0/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish a versioned ZIP release on every vX.Y.Z tag
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write   # required to create GitHub Releases
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-build
+          path: release/
+
+      # Strip the leading "v" from the tag to get a plain version number.
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Jellyfin plugin ZIPs must be named  <PluginName>_<version>.zip
+      - name: Package ZIP
+        run: |
+          cd release
+          zip -r "../${{ env.PLUGIN_NAME }}_${{ steps.version.outputs.VERSION }}.zip" .
+
+      # Recompute checksum and patch manifest.json so the catalogue always
+      # reflects the latest published version.
+      - name: Update manifest checksum & version
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          ZIP="${{ env.PLUGIN_NAME }}_${VERSION}.zip"
+          MD5=$(md5sum "$ZIP" | awk '{ print $1 }')
+          CHECKSUM=$(sha256sum "$ZIP" | awk '{ print $1 }')
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Patch the manifest in-place with jq
+          jq --arg v  "$VERSION"   \
+             --arg md5 "$MD5"      \
+             --arg cs  "$CHECKSUM" \
+             --arg ts  "$TIMESTAMP" \
+             --arg url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$ZIP" \
+          '.[0].versions[0] |= {
+              version:   $v,
+              changelog: "See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}",
+              targetAbi: "10.11.11.0",
+              sourceUrl: $url,
+              checksum:  $cs,
+              timestamp: $ts
+          }' manifest.json > manifest_updated.json
+          mv manifest_updated.json manifest.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.PLUGIN_NAME }}_${{ steps.version.outputs.VERSION }}.zip
+            manifest.json
+          generate_release_notes: true
