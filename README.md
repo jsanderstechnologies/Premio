@@ -1,7 +1,11 @@
+![Premio Logo](assets/premio-logo.png)
+
 # Jellyfin.Plugin.Premio
 
 A **Jellyfin 10.11.11** backend plugin that lets Jellyfin search and stream content
 from [Premiumize.me](https://www.premiumize.me) cloud storage using `.strm` files.
+
+[![Build & Publish](https://github.com/jsanderstechnologies/Premio/actions/workflows/build.yml/badge.svg)](https://github.com/jsanderstechnologies/Premio/actions/workflows/build.yml)
 
 ---
 
@@ -65,6 +69,51 @@ The compiled DLL (`Jellyfin.Plugin.Premio.dll`) and its dependencies are placed 
 
 ---
 
+## Plugin Catalogue (manifest.json)
+
+[`manifest.json`](manifest.json) is the [Jellyfin plugin repository descriptor](https://jellyfin.org/docs/general/server/plugins/index.html).
+Point Jellyfin at the raw GitHub URL to install Premio directly from the catalogue:
+
+```
+https://raw.githubusercontent.com/jsanderstechnologies/Premio/master/manifest.json
+```
+
+The manifest `imageUrl` references the logo at:
+
+```
+https://raw.githubusercontent.com/jsanderstechnologies/Premio/master/assets/premio-logo.png
+```
+
+> **Note:** The `checksum` and `sourceUrl` fields in `manifest.json` are automatically
+> patched by the CI publish job on every tagged release — do not edit them manually.
+
+---
+
+## CI / CD
+
+The [Build & Publish](.github/workflows/build.yml) GitHub Actions workflow:
+
+| Trigger | Job | What it does |
+|---|---|---|
+| Push / PR to `master` | **Build** | `dotnet restore` → `dotnet build -c Release` → uploads artifact |
+| Tag `vX.Y.Z` | **Build** then **Publish** | Packages a Jellyfin-compatible ZIP, patches `manifest.json` (version, checksum, sourceUrl, timestamp via `jq`), creates a GitHub Release |
+
+To cut a release, push a tag:
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+---
+
+## Assets
+
+| File | Description |
+|---|---|
+| [`assets/premio-logo.png`](assets/premio-logo.png) | Plugin logo — Premiumize body + Torrentio µ-circle head |
+
+---
+
 ## Key design decisions
 
 * **Typed `HttpClient`** — `PremiumizeClient` is registered via `AddHttpClient<T>()`,
@@ -74,3 +123,4 @@ The compiled DLL (`Jellyfin.Plugin.Premio.dll`) and its dependencies are placed 
   host-side code changes are required.
 * **`.strm` files** — Jellyfin natively indexes `.strm` files as remote media items,
   so no custom media provider is needed for basic playback.
+
