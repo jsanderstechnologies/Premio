@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Configuration;
@@ -33,9 +34,74 @@ public sealed partial class StrmFileService
         PremioPlugin.Instance?.Configuration
         ?? throw new InvalidOperationException("Premio: Plugin configuration is not available.");
 
+    /// <summary>
+    /// Removes invalid filesystem characters from a file or directory name.
+    /// </summary>
+    /// <param name="name">Raw filename.</param>
+    /// <returns>Sanitized filename safe for disk storage.</returns>
+    public static string SanitizeFileName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return "Untitled";
+        }
+
+        var invalidChars = Regex.Escape(new string(Path.GetInvalidFileNameChars()));
+        var invalidRegStr = $"[{invalidChars}]";
+        return Regex.Replace(name, invalidRegStr, "_").Trim();
+    }
+
     // -------------------------------------------------------------------------
     // Public methods
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Writes a <c>.strm</c> file into the appropriate Movie or TV Show directory based on media type.
+    /// </summary>
+    /// <param name="title">Item title or filename.</param>
+    /// <param name="streamUri">Direct stream URI.</param>
+    /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
+    public async Task<string?> WriteMediaStrmFileAsync(
+        string title,
+        Uri streamUri,
+        bool isTvShow = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentNullException.ThrowIfNull(streamUri);
+
+        var targetDir = isTvShow
+            ? (string.IsNullOrWhiteSpace(Config.TvShowsStrmDirectory) ? Config.StrmOutputDirectory : Config.TvShowsStrmDirectory)
+            : (string.IsNullOrWhiteSpace(Config.MoviesStrmDirectory) ? Config.StrmOutputDirectory : Config.MoviesStrmDirectory);
+
+        if (string.IsNullOrWhiteSpace(targetDir))
+        {
+            return null;
+        }
+
+        var safeTitle = SanitizeFileName(title);
+        var absolutePath = Path.Combine(targetDir, safeTitle + ".strm");
+
+        if (File.Exists(absolutePath) && !Config.OverwriteExistingStrmFiles)
+        {
+            LogSkippingExistingFile(_logger, absolutePath);
+            return absolutePath;
+        }
+
+        var directory = Path.GetDirectoryName(absolutePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.WriteAllTextAsync(absolutePath, streamUri.AbsoluteUri, cancellationToken)
+                  .ConfigureAwait(false);
+
+        LogWroteFile(_logger, absolutePath);
+        return absolutePath;
+    }
 
     /// <summary>
     /// Writes (or overwrites) a <c>.strm</c> file containing <paramref name="streamUri"/>.

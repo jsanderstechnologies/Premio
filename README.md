@@ -33,7 +33,11 @@ Jellyfin.Plugin.Premio/
 │
 ├── Services/
 │   ├── PremiumizeClient.cs      # Typed HttpClient for the Premiumize REST API
+│   ├── SearchActionFilter.cs    # ASP.NET Core Action Filter intercepting search
 │   └── StrmFileService.cs       # .strm file creation / management
+│
+├── Tasks/
+│   └── SyncPremiumizeTask.cs    # IScheduledTask background cloud synchroniser
 │
 ├── Plugin.cs                    # IPlugin entry point (metadata, web pages)
 ├── ServiceRegistrator.cs        # IPluginServiceRegistrator DI wiring

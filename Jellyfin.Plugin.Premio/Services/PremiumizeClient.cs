@@ -72,13 +72,15 @@ public sealed partial class PremiumizeClient
     /// <exception cref="HttpRequestException">Thrown when the HTTP call fails.</exception>
     /// <exception cref="PremiumizeApiException">Thrown when the API returns a non-success status.</exception>
     public async Task<IReadOnlyList<PremiumizeSearchItem>> SearchAsync(
-        string query,
+        string? query,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        var safeQuery = query?.Trim() ?? string.Empty;
+        var url = string.IsNullOrWhiteSpace(safeQuery)
+            ? WithKey("folder/search?q=")
+            : WithKey($"folder/search?q={Uri.EscapeDataString(safeQuery)}");
 
-        var url = WithKey($"folder/search?q={Uri.EscapeDataString(query)}");
-        LogSearching(_logger, query);
+        LogSearching(_logger, safeQuery);
 
         var response = await _http
             .GetFromJsonAsync<PremiumizeResponse<PremiumizeSearchContent>>(url, cancellationToken)

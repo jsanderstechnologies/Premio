@@ -1,6 +1,9 @@
 using Jellyfin.Plugin.Premio.Services;
+using Jellyfin.Plugin.Premio.Tasks;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Model.Tasks;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Jellyfin.Plugin.Premio;
@@ -19,5 +22,15 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
 
         // Singleton that manages .strm file creation and lifecycle.
         serviceCollection.AddSingleton<StrmFileService>();
+
+        // Scoped action filter for search interception
+        serviceCollection.AddScoped<SearchActionFilter>();
+        serviceCollection.Configure<MvcOptions>(options =>
+        {
+            options.Filters.AddService<SearchActionFilter>();
+        });
+
+        // Scheduled task for background cloud storage synchronization
+        serviceCollection.AddSingleton<IScheduledTask, SyncPremiumizeTask>();
     }
 }
