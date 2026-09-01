@@ -39,7 +39,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: plugin-build
-          path: ${{ env.PLUGIN_NAME }}/bin/Release/net8.0/
+          path: ${{ env.PLUGIN_NAME }}/bin/Release/net9.0/
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------

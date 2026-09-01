@@ -64,7 +64,7 @@ dotnet build -c Release
 ```
 
 The compiled DLL (`Jellyfin.Plugin.Premio.dll`) and its dependencies are placed in
-`bin/Release/net8.0/`. Copy the entire output folder to your Jellyfin plugin directory
+`bin/Release/net9.0/`. Copy the entire output folder to your Jellyfin plugin directory
 (e.g. `/var/lib/jellyfin/plugins/Premio_1.0.0.0/`) and restart Jellyfin.
 
 ---
