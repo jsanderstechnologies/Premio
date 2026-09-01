@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,6 +52,7 @@ public sealed partial class SyncPremiumizeTask : IScheduledTask
     public string Category => "Premio";
 
     /// <inheritdoc />
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Scheduled tasks must capture all exceptions and report failure gracefully.")]
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         var config = PremioPlugin.Instance?.Configuration;
@@ -126,7 +128,7 @@ public sealed partial class SyncPremiumizeTask : IScheduledTask
         [
             new TaskTriggerInfo
             {
-                Type = TaskTriggerInfo.TriggerInterval,
+                Type = "IntervalTrigger",
                 IntervalTicks = TimeSpan.FromHours(6).Ticks
             }
         ];

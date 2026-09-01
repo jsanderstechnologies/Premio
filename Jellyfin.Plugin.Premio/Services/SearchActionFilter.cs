@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Querying;
@@ -45,6 +48,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     }
 
     /// <inheritdoc />
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Fail-safe: search interception errors must not break native search.")]
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -78,11 +82,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    await EnrichSearchHintsAsync(hintResult, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, searchResults, cancellationToken).ConfigureAwait(false);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    await EnrichQueryResultAsync(itemResult, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichQueryResultAsync(itemResult, searchResults, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -92,10 +96,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
-    private async Task EnrichSearchHintsAsync(
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
+    private Task<SearchHintResult> EnrichSearchHintsAsync(
         SearchHintResult hintResult,
         IReadOnlyList<PremiumizeSearchItem> items,
-        System.Threading.CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
 
@@ -112,15 +117,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var hint = new SearchHint
             {
                 Id = itemGuid,
-                ItemId = itemGuid,
                 Name = $"[Premio] {item.Name}",
-                Type = isTv ? "Episode" : "Movie",
-                MediaType = "Video"
+                Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
+                MediaType = MediaType.Video
             };
 
             existingHints.Add(hint);
 
-            // Write corresponding .strm file if stream URL can be resolved
+            // Write corresponding .strm file in background
             _ = Task.Run(async () =>
             {
                 try
@@ -138,14 +142,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }, cancellationToken);
         }
 
-        hintResult.SearchHints = existingHints.ToArray();
-        hintResult.TotalRecordCount = existingHints.Count;
+        return Task.FromResult(new SearchHintResult(existingHints.ToArray(), existingHints.Count));
     }
 
-    private async Task EnrichQueryResultAsync(
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
+    private Task<QueryResult<BaseItemDto>> EnrichQueryResultAsync(
         QueryResult<BaseItemDto> queryResult,
         IReadOnlyList<PremiumizeSearchItem> items,
-        System.Threading.CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
 
@@ -163,8 +167,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = itemGuid,
                 Name = $"[Premio] {item.Name}",
-                Type = isTv ? "Episode" : "Movie",
-                MediaType = "Video",
+                Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
+                MediaType = MediaType.Video,
                 IsFolder = false
             };
 
@@ -188,15 +192,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }, cancellationToken);
         }
 
-        queryResult.Items = existingItems.ToArray();
-        queryResult.TotalRecordCount = existingItems.Count;
+        return Task.FromResult(new QueryResult<BaseItemDto>(existingItems.ToArray(), existingItems.Count));
     }
 
     private static Guid GenerateDeterministicGuid(string id)
     {
         var input = $"premio:{id}";
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
-        return new Guid(hash);
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return new Guid(hash.AsSpan(0, 16));
     }
 
     // -------------------------------------------------------------------------
