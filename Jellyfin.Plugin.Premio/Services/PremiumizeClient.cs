@@ -83,12 +83,12 @@ public sealed partial class PremiumizeClient
         LogSearching(_logger, safeQuery);
 
         var response = await _http
-            .GetFromJsonAsync<PremiumizeResponse<PremiumizeSearchContent>>(url, cancellationToken)
+            .GetFromJsonAsync<PremiumizeResponse<IReadOnlyList<PremiumizeSearchItem>>>(url, cancellationToken)
             .ConfigureAwait(false);
 
         EnsureSuccess(response, "folder/search");
 
-        return response!.Content?.Files ?? [];
+        return response?.Content ?? [];
     }
 
     /// <summary>

@@ -59,13 +59,6 @@ public sealed class PremiumizeSearchItem
     public string? FolderId { get; init; }
 }
 
-/// <summary>Payload for the <c>/folder/search</c> endpoint.</summary>
-public sealed class PremiumizeSearchContent
-{
-    /// <summary>Gets the list of files matching the search query.</summary>
-    [JsonPropertyName("files")]
-    public IReadOnlyList<PremiumizeSearchItem> Files { get; init; } = [];
-}
 
 /// <summary>Payload for the <c>/item/details</c> endpoint.</summary>
 public sealed class PremiumizeItemDetails
