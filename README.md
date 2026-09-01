@@ -25,7 +25,8 @@ from [Premiumize.me](https://www.premiumize.me) cloud storage using `.strm` file
 Jellyfin.Plugin.Premio/
 │
 ├── Configuration/
-│   └── PluginConfiguration.cs   # Serialised plugin settings (XML)
+│   ├── PluginConfiguration.cs   # Serialised plugin settings (XML)
+│   └── configPage.html          # Admin dashboard configuration UI
 │
 ├── Models/
 │   └── PremiumizeModels.cs      # Premiumize v2 API response DTOs
@@ -48,10 +49,12 @@ Set the following values in the Jellyfin plugin settings UI (or directly in the 
 | Setting | Default | Description |
 |---|---|---|
 | `ApiKey` | *(empty)* | Premiumize API key from https://www.premiumize.me/account |
+| `MoviesStrmDirectory` | *(empty)* | Absolute directory where movie `.strm` files are written |
+| `TvShowsStrmDirectory` | *(empty)* | Absolute directory where TV show `.strm` files are written |
+| `StrmOutputDirectory` | *(empty)* | Default / fallback directory for `.strm` files |
+| `OverwriteExistingStrmFiles` | `true` | Whether to update existing `.strm` files on refresh |
 | `ApiBaseUrl` | `https://www.premiumize.me/api` | Override for reverse-proxy setups |
 | `RequestTimeoutSeconds` | `30` | HTTP timeout for API calls |
-| `StrmOutputDirectory` | *(empty)* | Absolute directory where `.strm` files are written |
-| `OverwriteExistingStrmFiles` | `true` | Whether to update existing `.strm` files on refresh |
 | `MaxSearchResults` | `50` | Maximum results returned per search query |
 
 ---

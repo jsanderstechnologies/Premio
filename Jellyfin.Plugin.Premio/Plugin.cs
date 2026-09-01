@@ -47,7 +47,13 @@ public sealed class PremioPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()
     {
-        // Populate when a configuration web-page is added.
-        return Array.Empty<PluginPageInfo>();
+        return
+        [
+            new PluginPageInfo
+            {
+                Name = Name,
+                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
+            }
+        ];
     }
 }

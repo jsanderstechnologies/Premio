@@ -42,10 +42,22 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Gets or sets the absolute path to the directory where .strm files are written.
+    /// Gets or sets the absolute path to the directory where .strm files are written by default.
     /// Jellyfin must have read access to this directory.
     /// </summary>
     public string StrmOutputDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the absolute path to the directory where Movie .strm files are written.
+    /// When not set, falls back to <see cref="StrmOutputDirectory"/>.
+    /// </summary>
+    public string MoviesStrmDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the absolute path to the directory where TV Show .strm files are written.
+    /// When not set, falls back to <see cref="StrmOutputDirectory"/>.
+    /// </summary>
+    public string TvShowsStrmDirectory { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets a value indicating whether existing .strm files are overwritten
