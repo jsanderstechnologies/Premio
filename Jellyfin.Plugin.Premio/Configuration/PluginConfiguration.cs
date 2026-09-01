@@ -18,6 +18,12 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string ApiKey { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Gets or sets the optional personal TMDB API key (v3 auth).
+    /// If left empty, a built-in default key will be used.
+    /// </summary>
+    public string TmdbApiKey { get; set; } = string.Empty;
+
     // -------------------------------------------------------------------------
     // Network / HTTP settings
     // -------------------------------------------------------------------------

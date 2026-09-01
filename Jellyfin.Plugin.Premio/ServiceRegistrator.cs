@@ -17,8 +17,9 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
     /// <inheritdoc />
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        // Typed HttpClient — lifetime managed by IHttpClientFactory.
+        // Typed HttpClients — lifetime managed by IHttpClientFactory.
         serviceCollection.AddHttpClient<PremiumizeClient>();
+        serviceCollection.AddHttpClient<TmdbClient>();
 
         // Singleton that manages .strm file creation and lifecycle.
         serviceCollection.AddSingleton<StrmFileService>();

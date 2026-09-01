@@ -57,6 +57,13 @@
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Advanced Settings</h3>
 
+                        <!-- TMDB API Key -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API Key (Optional)</label>
+                            <input id="txtTmdbApiKey" name="txtTmdbApiKey" type="password" is="emby-input" />
+                            <div class="fieldDescription">Custom TheMovieDb (v3) API key for enhanced metadata & poster retrieval. Leave empty to use the built-in key. (<a href="https://www.themoviedb.org/settings/api" target="_blank" class="button-link">Get TMDB Key</a>)</div>
+                        </div>
+
                         <!-- API Base URL -->
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtApiBaseUrl">API Base URL</label>
@@ -102,6 +109,7 @@
                         document.querySelector('#txtTvShowsStrmDir').value = config.TvShowsStrmDirectory || '';
                         document.querySelector('#txtStrmOutputDir').value = config.StrmOutputDirectory || '';
                         document.querySelector('#chkOverwrite').checked = config.OverwriteExistingStrmFiles !== false;
+                        document.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                         document.querySelector('#txtApiBaseUrl').value = config.ApiBaseUrl || 'https://www.premiumize.me/api';
                         document.querySelector('#txtMaxSearchResults').value = config.MaxSearchResults || 50;
                         document.querySelector('#txtRequestTimeout').value = config.RequestTimeoutSeconds || 30;
@@ -122,6 +130,7 @@
                         config.TvShowsStrmDirectory = document.querySelector('#txtTvShowsStrmDir').value;
                         config.StrmOutputDirectory = document.querySelector('#txtStrmOutputDir').value;
                         config.OverwriteExistingStrmFiles = document.querySelector('#chkOverwrite').checked;
+                        config.TmdbApiKey = document.querySelector('#txtTmdbApiKey').value;
                         config.ApiBaseUrl = document.querySelector('#txtApiBaseUrl').value || 'https://www.premiumize.me/api';
                         config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10) || 50;
                         config.RequestTimeoutSeconds = parseInt(document.querySelector('#txtRequestTimeout').value, 10) || 30;

@@ -104,6 +104,45 @@ public sealed partial class StrmFileService
     }
 
     /// <summary>
+    /// Saves a poster image alongside an existing .strm file.
+    /// </summary>
+    /// <param name="strmPath">The absolute path to the generated .strm file.</param>
+    /// <param name="posterBytes">Raw image bytes to save.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The path to the saved poster image, or null if invalid.</returns>
+    public async Task<string?> SavePosterImageAsync(
+        string strmPath,
+        byte[] posterBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(strmPath);
+        ArgumentNullException.ThrowIfNull(posterBytes);
+
+        if (posterBytes.Length == 0)
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(strmPath);
+        var baseName = Path.GetFileNameWithoutExtension(strmPath);
+        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(baseName))
+        {
+            return null;
+        }
+
+        var posterPath = Path.Combine(directory, $"{baseName}-poster.jpg");
+
+        if (File.Exists(posterPath) && !Config.OverwriteExistingStrmFiles)
+        {
+            return posterPath;
+        }
+
+        await File.WriteAllBytesAsync(posterPath, posterBytes, cancellationToken).ConfigureAwait(false);
+        LogSavedPoster(_logger, posterPath);
+        return posterPath;
+    }
+
+    /// <summary>
     /// Writes (or overwrites) a <c>.strm</c> file containing <paramref name="streamUri"/>.
     /// The file is placed under <see cref="PluginConfiguration.StrmOutputDirectory"/>
     /// using <paramref name="relativePath"/> (which may include sub-directories).
@@ -244,6 +283,9 @@ public sealed partial class StrmFileService
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Wrote .strm file: {Path}")]
     private static partial void LogWroteFile(ILogger logger, string path);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Saved poster image: {Path}")]
+    private static partial void LogSavedPoster(ILogger logger, string path);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Deleted .strm file: {Path}")]
     private static partial void LogDeletedFile(ILogger logger, string path);

@@ -29,12 +29,14 @@ Jellyfin.Plugin.Premio/
 │   └── configPage.html          # Admin dashboard configuration UI
 │
 ├── Models/
-│   └── PremiumizeModels.cs      # Premiumize v2 API response DTOs
+│   ├── PremiumizeModels.cs      # Premiumize v2 API response DTOs
+│   └── TmdbModels.cs            # TheMovieDb API response DTOs
 │
 ├── Services/
 │   ├── PremiumizeClient.cs      # Typed HttpClient for the Premiumize REST API
 │   ├── SearchActionFilter.cs    # ASP.NET Core Action Filter intercepting search
-│   └── StrmFileService.cs       # .strm file creation / management
+│   ├── StrmFileService.cs       # .strm file and poster image management
+│   └── TmdbClient.cs            # Typed HttpClient for TMDB search & poster retrieval
 │
 ├── Tasks/
 │   └── SyncPremiumizeTask.cs    # IScheduledTask background cloud synchroniser
@@ -57,6 +59,7 @@ Set the following values in the Jellyfin plugin settings UI (or directly in the 
 | `TvShowsStrmDirectory` | *(empty)* | Absolute directory where TV show `.strm` files are written |
 | `StrmOutputDirectory` | *(empty)* | Default / fallback directory for `.strm` files |
 | `OverwriteExistingStrmFiles` | `true` | Whether to update existing `.strm` files on refresh |
+| `TmdbApiKey` | *(built-in)* | Optional custom TMDB (v3) API key for metadata & posters |
 | `ApiBaseUrl` | `https://www.premiumize.me/api` | Override for reverse-proxy setups |
 | `RequestTimeoutSeconds` | `30` | HTTP timeout for API calls |
 | `MaxSearchResults` | `50` | Maximum results returned per search query |

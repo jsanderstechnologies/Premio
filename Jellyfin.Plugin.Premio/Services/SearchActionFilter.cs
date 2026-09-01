@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -19,7 +20,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints and /Items with searchTerm) and enriches results with Premiumize cloud items.
+/// (/Search/Hints and /Items with searchTerm) and enriches results with Premiumize cloud items and TMDB posters.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
@@ -28,6 +29,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly PremiumizeClient _client;
+    private readonly TmdbClient _tmdbClient;
     private readonly StrmFileService _strmService;
     private readonly ILogger<SearchActionFilter> _logger;
 
@@ -35,14 +37,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// Initialises a new instance of <see cref="SearchActionFilter"/>.
     /// </summary>
     /// <param name="client">Injected Premiumize REST API client.</param>
+    /// <param name="tmdbClient">Injected TMDB client.</param>
     /// <param name="strmService">Injected STRM file service.</param>
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
         PremiumizeClient client,
+        TmdbClient tmdbClient,
         StrmFileService strmService,
         ILogger<SearchActionFilter> logger)
     {
         _client = client;
+        _tmdbClient = tmdbClient;
         _strmService = strmService;
         _logger = logger;
     }
@@ -71,9 +76,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         try
         {
             var cancellationToken = context.HttpContext.RequestAborted;
-            var searchResults = await _client.SearchAsync(searchTerm, cancellationToken).ConfigureAwait(false);
 
-            if (searchResults.Count == 0)
+            // Search Premiumize and TMDB concurrently
+            var searchTask = _client.SearchAsync(searchTerm, cancellationToken);
+            var tmdbTask = _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken);
+
+            await Task.WhenAll(searchTask, tmdbTask).ConfigureAwait(false);
+
+            var searchResults = searchTask.Result;
+            var tmdbResults = tmdbTask.Result;
+
+            if (searchResults.Count == 0 && tmdbResults.Count == 0)
             {
                 return;
             }
@@ -82,11 +95,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, searchResults, tmdbResults, cancellationToken).ConfigureAwait(false);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    objectResult.Value = await EnrichQueryResultAsync(itemResult, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichQueryResultAsync(itemResult, searchResults, tmdbResults, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -100,9 +113,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private Task<SearchHintResult> EnrichSearchHintsAsync(
         SearchHintResult hintResult,
         IReadOnlyList<PremiumizeSearchItem> items,
+        IReadOnlyList<TmdbItem> tmdbItems,
         CancellationToken cancellationToken)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
+        var primaryTmdb = tmdbItems.FirstOrDefault();
 
         foreach (var item in items)
         {
@@ -114,17 +129,25 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var isTv = TvPattern.IsMatch(item.Name);
             var itemGuid = GenerateDeterministicGuid(item.Id);
 
+            // Match best TMDB item if available
+            var matchedTmdb = tmdbItems.FirstOrDefault(t =>
+                item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
+
+            var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
+                ? $"[Premio] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
+                : $"[Premio] {item.Name}";
+
             var hint = new SearchHint
             {
                 Id = itemGuid,
-                Name = $"[Premio] {item.Name}",
+                Name = displayName,
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
                 MediaType = MediaType.Video
             };
 
             existingHints.Add(hint);
 
-            // Write corresponding .strm file in background
+            // Write corresponding .strm file and download TMDB poster in background
             _ = Task.Run(async () =>
             {
                 try
@@ -132,7 +155,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var streamUrl = await _client.GetStreamUrlAsync(item.Id, cancellationToken).ConfigureAwait(false);
                     if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
                     {
-                        await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
+                        var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
+
+                        // Download poster if TMDB match has a poster path
+                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null && Uri.TryCreate(matchedTmdb.PosterUrl, UriKind.Absolute, out var posterUri))
+                        {
+                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                            if (posterBytes is not null && posterBytes.Length > 0)
+                            {
+                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -149,9 +182,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private Task<QueryResult<BaseItemDto>> EnrichQueryResultAsync(
         QueryResult<BaseItemDto> queryResult,
         IReadOnlyList<PremiumizeSearchItem> items,
+        IReadOnlyList<TmdbItem> tmdbItems,
         CancellationToken cancellationToken)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
+        var primaryTmdb = tmdbItems.FirstOrDefault();
 
         foreach (var item in items)
         {
@@ -163,18 +198,26 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var isTv = TvPattern.IsMatch(item.Name);
             var itemGuid = GenerateDeterministicGuid(item.Id);
 
+            var matchedTmdb = tmdbItems.FirstOrDefault(t =>
+                item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
+
+            var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
+                ? $"[Premio] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
+                : $"[Premio] {item.Name}";
+
             var dto = new BaseItemDto
             {
                 Id = itemGuid,
-                Name = $"[Premio] {item.Name}",
+                Name = displayName,
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
+                Overview = matchedTmdb?.Overview,
                 IsFolder = false
             };
 
             existingItems.Add(dto);
 
-            // Write corresponding .strm file in background
+            // Write corresponding .strm file and download TMDB poster in background
             _ = Task.Run(async () =>
             {
                 try
@@ -182,7 +225,16 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var streamUrl = await _client.GetStreamUrlAsync(item.Id, cancellationToken).ConfigureAwait(false);
                     if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
                     {
-                        await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
+                        var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
+
+                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null && Uri.TryCreate(matchedTmdb.PosterUrl, UriKind.Absolute, out var posterUri))
+                        {
+                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                            if (posterBytes is not null && posterBytes.Length > 0)
+                            {
+                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
