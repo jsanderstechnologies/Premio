@@ -275,7 +275,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 ProductionYear = prodYear,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
-                PlayAccess = PlayAccess.Full,
                 LocationType = LocationType.Remote,
                 IsFolder = false
             };
@@ -312,7 +311,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Overview = matchedTmdb?.Overview,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
                 ImageTags = matchedTmdb is not null ? new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + matchedTmdb.Id } } : null,
-                PlayAccess = PlayAccess.Full,
                 LocationType = LocationType.Remote,
                 IsFolder = false
             };
