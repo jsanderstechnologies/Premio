@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
+using MediaBrowser.Controller;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
@@ -36,6 +37,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private readonly PremiumizeClient _client;
     private readonly TmdbClient _tmdbClient;
     private readonly StrmFileService _strmService;
+    private readonly IServerApplicationHost _appHost;
     private readonly ILogger<SearchActionFilter> _logger;
 
     /// <summary>
@@ -44,16 +46,19 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// <param name="client">Injected Premiumize REST API client.</param>
     /// <param name="tmdbClient">Injected TMDB client.</param>
     /// <param name="strmService">Injected STRM file service.</param>
+    /// <param name="appHost">Injected Jellyfin server host.</param>
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
         PremiumizeClient client,
         TmdbClient tmdbClient,
         StrmFileService strmService,
+        IServerApplicationHost appHost,
         ILogger<SearchActionFilter> logger)
     {
         _client = client;
         _tmdbClient = tmdbClient;
         _strmService = strmService;
+        _appHost = appHost;
         _logger = logger;
     }
 
@@ -242,6 +247,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         CancellationToken cancellationToken)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
+        var serverId = _appHost.SystemId;
 
         // 1. Add TMDB items
         foreach (var tmdbItem in tmdbItems)
@@ -261,6 +267,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var dto = new BaseItemDto
             {
                 Id = itemGuid,
+                ServerId = serverId,
                 Name = displayName,
                 Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
@@ -268,6 +275,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 ProductionYear = prodYear,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
+                PlayAccess = PlayAccess.Full,
+                LocationType = LocationType.Remote,
                 IsFolder = false
             };
 
@@ -296,12 +305,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var dto = new BaseItemDto
             {
                 Id = itemGuid,
+                ServerId = serverId,
                 Name = displayName,
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
                 Overview = matchedTmdb?.Overview,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
                 ImageTags = matchedTmdb is not null ? new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + matchedTmdb.Id } } : null,
+                PlayAccess = PlayAccess.Full,
+                LocationType = LocationType.Remote,
                 IsFolder = false
             };
 
