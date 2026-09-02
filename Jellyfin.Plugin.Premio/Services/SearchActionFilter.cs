@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -11,6 +13,7 @@ using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Controller;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Search;
 using Microsoft.AspNetCore.Http;
@@ -21,9 +24,9 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
-/// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints, /Items, /Persons, /Artists with searchTerm) to return strictly categorized TMDB results (Movies, Shows, People, Artists)
-/// and dynamically serves TMDB poster and profile images.
+/// ASP.NET Core Action Filter that intercepts Jellyfin search, details, image, and playback requests
+/// for virtual TMDB items to provide native item details with a Torrentio stream version dropdown
+/// and automatic Premiumize debrid library creation on stream selection.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
@@ -31,7 +34,18 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         @"Items/([a-fA-F0-9\-]{32,36})/Images",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex ItemDetailsRegex = new(
+        @"(?:/Users/[a-fA-F0-9\-]{32,36})?/Items/([a-fA-F0-9\-]{32,36})(?:$|\?|/)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex PlaybackInfoRegex = new(
+        @"Items/([a-fA-F0-9\-]{32,36})/PlaybackInfo",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private readonly TmdbClient _tmdbClient;
+    private readonly TorrentioClient _torrentioClient;
+    private readonly PremiumizeClient _premiumizeClient;
+    private readonly StrmFileService _strmService;
     private readonly IServerApplicationHost _appHost;
     private readonly ILogger<SearchActionFilter> _logger;
 
@@ -39,42 +53,119 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// Initialises a new instance of <see cref="SearchActionFilter"/>.
     /// </summary>
     /// <param name="tmdbClient">Injected TMDB client.</param>
+    /// <param name="torrentioClient">Injected Torrentio client.</param>
+    /// <param name="premiumizeClient">Injected Premiumize client.</param>
+    /// <param name="strmService">Injected STRM file service.</param>
     /// <param name="appHost">Injected Jellyfin server host.</param>
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
         TmdbClient tmdbClient,
+        TorrentioClient torrentioClient,
+        PremiumizeClient premiumizeClient,
+        StrmFileService strmService,
         IServerApplicationHost appHost,
         ILogger<SearchActionFilter> logger)
     {
         _tmdbClient = tmdbClient;
+        _torrentioClient = torrentioClient;
+        _premiumizeClient = premiumizeClient;
+        _strmService = strmService;
         _appHost = appHost;
         _logger = logger;
     }
 
     /// <inheritdoc />
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Fail-safe: search interception errors must not break native search.")]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Fail-safe: interception errors must not break native Jellyfin functions.")]
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
 
-        // 1. Intercept Image requests for virtual TMDB items
-        var requestedId = ExtractItemId(context);
-        if (requestedId != Guid.Empty)
-        {
-            if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
-            {
-                context.Result = new FileContentResult(cachedBytes, "image/jpeg");
-                return;
-            }
+        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
+        var cancellationToken = context.HttpContext.RequestAborted;
 
-            if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+        // ---------------------------------------------------------------------
+        // 1. Intercept Image requests (Primary & Backdrop) for virtual items
+        // ---------------------------------------------------------------------
+        if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestedId = ExtractItemId(context);
+            if (requestedId != Guid.Empty)
             {
-                var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, context.HttpContext.RequestAborted).ConfigureAwait(false);
-                if (downloadedBytes is not null && downloadedBytes.Length > 0)
+                var isBackdrop = requestPath.Contains("/Backdrop", StringComparison.OrdinalIgnoreCase);
+
+                if (isBackdrop)
                 {
-                    PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
-                    context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
+                    if (PremioMetadataCache.TryGetBackdropBytes(requestedId, out var cachedBg) && cachedBg is not null)
+                    {
+                        context.Result = new FileContentResult(cachedBg, "image/jpeg");
+                        return;
+                    }
+
+                    if (PremioMetadataCache.TryGetBackdropUri(requestedId, out var bgUri) && bgUri is not null)
+                    {
+                        var downloadedBg = await _tmdbClient.DownloadImageBytesAsync(bgUri, cancellationToken).ConfigureAwait(false);
+                        if (downloadedBg is not null && downloadedBg.Length > 0)
+                        {
+                            PremioMetadataCache.SetBackdropBytes(requestedId, downloadedBg);
+                            context.Result = new FileContentResult(downloadedBg, "image/jpeg");
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
+                    {
+                        context.Result = new FileContentResult(cachedBytes, "image/jpeg");
+                        return;
+                    }
+
+                    if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+                    {
+                        var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                        if (downloadedBytes is not null && downloadedBytes.Length > 0)
+                        {
+                            PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
+                            context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. Intercept Item Details screen opening (GET /Items/{id} or /Users/{userId}/Items/{id})
+        // ---------------------------------------------------------------------
+        if (HttpMethods.IsGet(context.HttpContext.Request.Method) &&
+            !requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase) &&
+            !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestedId = ExtractItemId(context);
+            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
+            {
+                var detailsDto = await BuildItemDetailsDtoAsync(requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
+                if (detailsDto is not null)
+                {
+                    context.Result = new ObjectResult(detailsDto);
+                    return;
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. Intercept PlaybackInfo (when user selects a stream version and plays)
+        // ---------------------------------------------------------------------
+        if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestedId = ExtractItemId(context);
+            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
+            {
+                var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
+                if (playbackResult is not null)
+                {
+                    context.Result = new ObjectResult(playbackResult);
                     return;
                 }
             }
@@ -82,7 +173,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         var executedContext = await next().ConfigureAwait(false);
 
-        // 2. Intercept Search requests
+        // ---------------------------------------------------------------------
+        // 4. Intercept Search requests (/Search/Hints and /Items?searchTerm=...)
+        // ---------------------------------------------------------------------
         var searchTerm = context.HttpContext.Request.Query["searchTerm"].ToString();
         if (string.IsNullOrWhiteSpace(searchTerm))
         {
@@ -91,8 +184,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         try
         {
-            var cancellationToken = context.HttpContext.RequestAborted;
-
             // Search TMDB exclusively
             var tmdbResults = await _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken).ConfigureAwait(false);
             if (tmdbResults.Count == 0)
@@ -101,8 +192,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
 
             var query = context.HttpContext.Request.Query;
-            var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-
             var includeTypes = ParseQuerySet(query, "includeItemTypes");
             var excludeTypes = ParseQuerySet(query, "excludeItemTypes");
             var mediaTypes = ParseQuerySet(query, "mediaTypes");
@@ -135,6 +224,187 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
+    private async Task<BaseItemDto> BuildItemDetailsDtoAsync(
+        Guid requestedId,
+        TmdbItem item,
+        CancellationToken cancellationToken)
+    {
+        var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+
+        // 1. Fetch rich TMDB details & IMDB external ID
+        var details = await _tmdbClient.GetDetailsAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
+        var imdbId = details?.ImdbId ?? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
+
+        // 2. Fetch Torrentio streams
+        IReadOnlyList<TorrentioStreamResult> streams = Array.Empty<TorrentioStreamResult>();
+        if (!string.IsNullOrWhiteSpace(imdbId))
+        {
+            streams = isTv
+                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
+                : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+        }
+
+        // 3. Populate MediaSources (Version dropdown)
+        var mediaSources = new List<MediaSourceInfo>
+        {
+            new MediaSourceInfo
+            {
+                Id = "select_stream",
+                Name = "Select a Stream",
+                Type = MediaSourceType.Default,
+                IsRemote = true,
+                SupportsDirectPlay = false,
+                SupportsDirectStream = false,
+                SupportsTranscoding = false
+            }
+        };
+
+        foreach (var stream in streams)
+        {
+            var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
+            var label = $"{stream.CleanReleaseName}{sizeStr}";
+
+            mediaSources.Add(new MediaSourceInfo
+            {
+                Id = !string.IsNullOrWhiteSpace(stream.InfoHash) ? stream.InfoHash : Guid.NewGuid().ToString("N"),
+                Name = label,
+                Path = !string.IsNullOrWhiteSpace(stream.InfoHash) ? $"magnet:?xt=urn:btih:{stream.InfoHash}" : string.Empty,
+                Type = MediaSourceType.Default,
+                Container = "mkv",
+                VideoType = VideoType.VideoFile,
+                IsRemote = true,
+                SupportsDirectPlay = true,
+                SupportsDirectStream = true,
+                SupportsTranscoding = true
+            });
+        }
+
+        // 4. Register Backdrop if available
+        if (details?.BackdropUrl is not null)
+        {
+            PremioMetadataCache.RegisterBackdrop(requestedId, details.BackdropUrl);
+        }
+
+        var displayTitle = details?.DisplayTitle ?? item.DisplayTitle;
+        var yearStr = details?.Year ?? item.Year;
+        var prodYear = int.TryParse(yearStr, out var y) ? (int?)y : null;
+
+        var dto = new BaseItemDto
+        {
+            Id = requestedId,
+            ServerId = _appHost.SystemId,
+            Name = displayTitle,
+            OriginalTitle = details?.Title ?? item.Title,
+            Overview = details?.Overview ?? item.Overview,
+            Tagline = details?.Tagline,
+            Genres = details?.Genres?.Select(g => g.Name).ToArray() ?? Array.Empty<string>(),
+            CommunityRating = details is not null ? (float)details.VoteAverage : (float)item.VoteAverage,
+            RunTimeTicks = details?.Runtime > 0 ? TimeSpan.FromMinutes(details.Runtime.Value).Ticks : null,
+            ProductionYear = prodYear,
+            Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
+            MediaType = MediaType.Video,
+            IsFolder = isTv,
+            PrimaryImageAspectRatio = 2.0 / 3.0,
+            ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
+            BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
+            MediaSources = mediaSources.ToArray(),
+            LocationType = LocationType.Remote
+        };
+
+        return dto;
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "PlaybackInfo must gracefully return stream URL or fallback without crashing.")]
+    private async Task<PlaybackInfoResponse?> HandlePlaybackInfoAsync(
+        ActionExecutingContext context,
+        Guid requestedId,
+        TmdbItem item,
+        CancellationToken cancellationToken)
+    {
+        var mediaSourceId = context.HttpContext.Request.Query["MediaSourceId"].ToString();
+
+        // If mediaSourceId is not specified or placeholder, fetch best stream from Torrentio
+        if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
+        {
+            var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var imdbId = await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(imdbId))
+            {
+                var streams = isTv
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+                if (streams.Count > 0)
+                {
+                    mediaSourceId = streams[0].InfoHash;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            // 1. Send magnet to Premiumize DirectDL
+            var directDl = await _premiumizeClient.CreateDirectDownloadAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
+            var streamUrl = directDl.Location;
+            if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
+            {
+                streamUrl = directDl.Content[0].StreamLink ?? directDl.Content[0].Link;
+            }
+
+            if (string.IsNullOrWhiteSpace(streamUrl))
+            {
+                return null;
+            }
+
+            // 2. Write corresponding .strm file and save poster to Jellyfin Library
+            var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var formattedTitle = !string.IsNullOrWhiteSpace(item.Year)
+                ? $"{item.DisplayTitle} ({item.Year})"
+                : item.DisplayTitle;
+
+            var strmPath = await _strmService.WriteMediaStrmFileAsync(formattedTitle, new Uri(streamUrl), isTv, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
+            {
+                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(item.PosterUrl, cancellationToken).ConfigureAwait(false);
+                if (posterBytes is not null && posterBytes.Length > 0)
+                {
+                    await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            // 3. Return PlaybackInfoResponse with direct Premiumize stream URL
+            return new PlaybackInfoResponse
+            {
+                MediaSources = new[]
+                {
+                    new MediaSourceInfo
+                    {
+                        Id = mediaSourceId,
+                        Path = streamUrl,
+                        Type = MediaSourceType.Default,
+                        Container = "mkv",
+                        VideoType = VideoType.VideoFile,
+                        IsRemote = true,
+                        SupportsDirectPlay = true,
+                        SupportsDirectStream = true,
+                        SupportsTranscoding = true
+                    }
+                },
+                PlaySessionId = Guid.NewGuid().ToString("N")
+            };
+        }
+        catch (Exception ex)
+        {
+            LogPlaybackResolutionFailed(_logger, item.DisplayTitle, ex.Message);
+            return null;
+        }
+    }
+
     private static Guid ExtractItemId(ActionExecutingContext context)
     {
         if (context.ActionArguments.TryGetValue("itemId", out var val) && val is not null)
@@ -150,14 +420,36 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
         }
 
-        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-        if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
+        if (context.ActionArguments.TryGetValue("id", out var valId) && valId is not null)
         {
-            var match = ItemImageRegex.Match(requestPath);
-            if (match.Success && Guid.TryParse(match.Groups[1].Value, out var matchedGuid))
+            if (valId is Guid g2)
             {
-                return matchedGuid;
+                return g2;
             }
+
+            if (valId is string s2 && Guid.TryParse(s2, out var parsed2))
+            {
+                return parsed2;
+            }
+        }
+
+        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
+        var imgMatch = ItemImageRegex.Match(requestPath);
+        if (imgMatch.Success && Guid.TryParse(imgMatch.Groups[1].Value, out var matchedGuid))
+        {
+            return matchedGuid;
+        }
+
+        var detailsMatch = ItemDetailsRegex.Match(requestPath);
+        if (detailsMatch.Success && Guid.TryParse(detailsMatch.Groups[1].Value, out var detailsGuid))
+        {
+            return detailsGuid;
+        }
+
+        var pbMatch = PlaybackInfoRegex.Match(requestPath);
+        if (pbMatch.Success && Guid.TryParse(pbMatch.Groups[1].Value, out var pbGuid))
+        {
+            return pbGuid;
         }
 
         return Guid.Empty;
@@ -393,4 +685,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Search interception failed for query '{SearchTerm}': {ErrorMessage}")]
     private static partial void LogSearchInterceptionFailed(ILogger logger, string searchTerm, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Playback resolution failed for title '{Title}': {ErrorMessage}")]
+    private static partial void LogPlaybackResolutionFailed(ILogger logger, string title, string errorMessage);
 }
