@@ -112,6 +112,30 @@ public static class PremioMetadataCache
         BackdropCache[id] = bytes;
     }
 
+    private static readonly ConcurrentDictionary<Guid, string> StreamHashMap = new();
+
+    /// <summary>
+    /// Registers a torrent infohash under a deterministic stream GUID.
+    /// </summary>
+    /// <param name="id">Stream GUID.</param>
+    /// <param name="infoHash">Torrent infohash.</param>
+    public static void RegisterStreamHash(Guid id, string infoHash)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(infoHash);
+        StreamHashMap[id] = infoHash;
+    }
+
+    /// <summary>
+    /// Attempts to retrieve the torrent infohash associated with the stream GUID.
+    /// </summary>
+    /// <param name="id">Stream GUID.</param>
+    /// <param name="infoHash">Output torrent infohash.</param>
+    /// <returns><c>true</c> if found; otherwise, <c>false</c>.</returns>
+    public static bool TryGetStreamHash(Guid id, out string? infoHash)
+    {
+        return StreamHashMap.TryGetValue(id, out infoHash);
+    }
+
     /// <summary>
     /// Attempts to retrieve the cached TMDB item.
     /// </summary>

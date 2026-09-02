@@ -373,13 +373,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
         };
 
+        var defaultStreamGuid = GenerateDeterministicGuid($"select_stream:{requestedId}");
+        PremioMetadataCache.Register(defaultStreamGuid, item);
+        var defaultStreamId = defaultStreamGuid.ToString("N");
+
         var mediaSources = new List<MediaSourceInfo>
         {
             new MediaSourceInfo
             {
-                Id = "select_stream",
+                Id = defaultStreamId,
                 Name = "Select a Stream",
-                Path = $"/Premio/Stream/{requestedId}?mediaSourceId=select_stream",
+                Path = $"/Premio/Stream/{requestedId}?mediaSourceId={defaultStreamId}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
@@ -396,13 +400,21 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         {
             var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
             var label = $"{stream.CleanReleaseName}{sizeStr}";
-            var streamId = !string.IsNullOrWhiteSpace(stream.InfoHash) ? stream.InfoHash : Guid.NewGuid().ToString("N");
+            var rawHash = stream.InfoHash ?? string.Empty;
+            var streamGuid = GenerateDeterministicGuid($"stream:{requestedId}:{rawHash}");
+            PremioMetadataCache.Register(streamGuid, item);
+            if (!string.IsNullOrWhiteSpace(rawHash))
+            {
+                PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
+            }
+
+            var streamId = streamGuid.ToString("N");
 
             mediaSources.Add(new MediaSourceInfo
             {
                 Id = streamId,
                 Name = label,
-                Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={streamId}",
+                Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={rawHash}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
@@ -531,23 +543,39 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 });
             }
 
+            var defaultStreams = new[]
+            {
+                new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
+                new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
+            };
+
             foreach (var stream in streams)
             {
                 var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
                 var label = $"{stream.CleanReleaseName}{sizeStr}";
+                var rawHash = stream.InfoHash ?? string.Empty;
+                var streamGuid = GenerateDeterministicGuid($"stream:{itemDto.Id}:{rawHash}");
+                PremioMetadataCache.Register(streamGuid, syntheticItem);
+                if (!string.IsNullOrWhiteSpace(rawHash))
+                {
+                    PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
+                }
+
+                var streamId = streamGuid.ToString("N");
 
                 mediaSources.Add(new MediaSourceInfo
                 {
-                    Id = stream.InfoHash,
+                    Id = streamId,
                     Name = label,
-                    Path = $"magnet:?xt=urn:btih:{stream.InfoHash}",
+                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
                     Type = MediaSourceType.Default,
                     Container = "mkv",
                     VideoType = VideoType.VideoFile,
                     IsRemote = true,
                     SupportsDirectPlay = true,
                     SupportsDirectStream = true,
-                    SupportsTranscoding = true
+                    SupportsTranscoding = true,
+                    MediaStreams = defaultStreams.ToList()
                 });
             }
 
@@ -576,6 +604,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         CancellationToken cancellationToken)
     {
         var mediaSourceId = ExtractMediaSourceId(context);
+        if (!string.IsNullOrWhiteSpace(mediaSourceId) && Guid.TryParse(mediaSourceId, out var parsedMediaGuid) && PremioMetadataCache.TryGetStreamHash(parsedMediaGuid, out var mappedHash))
+        {
+            mediaSourceId = mappedHash;
+        }
 
         // If mediaSourceId is not specified or placeholder, fetch best stream from Torrentio
         if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))

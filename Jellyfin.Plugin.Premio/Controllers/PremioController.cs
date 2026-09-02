@@ -73,6 +73,15 @@ public sealed partial class PremioController : ControllerBase
             : (!string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId != "select_stream" ? mediaSourceId : null);
 
         var requestedGuid = itemId ?? Guid.Empty;
+        if (!string.IsNullOrWhiteSpace(mediaSourceId) && Guid.TryParse(mediaSourceId, out var mediaGuid) && PremioMetadataCache.TryGetStreamHash(mediaGuid, out var mappedHash))
+        {
+            targetHash = mappedHash;
+        }
+        else if (requestedGuid != Guid.Empty && PremioMetadataCache.TryGetStreamHash(requestedGuid, out var directMappedHash))
+        {
+            targetHash = directMappedHash;
+        }
+
         TmdbItem? cachedItem = null;
 
         if (requestedGuid != Guid.Empty)
