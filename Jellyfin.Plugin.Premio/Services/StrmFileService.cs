@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Configuration;
+using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Premio.Services;
@@ -16,14 +17,19 @@ namespace Jellyfin.Plugin.Premio.Services;
 /// </summary>
 public sealed partial class StrmFileService
 {
+    private readonly ILibraryManager _libraryManager;
     private readonly ILogger<StrmFileService> _logger;
 
     /// <summary>
     /// Initialises a new <see cref="StrmFileService"/>.
     /// </summary>
+    /// <param name="libraryManager">Library manager to scan libraries after file creation.</param>
     /// <param name="logger">Logger injected by the host.</param>
-    public StrmFileService(ILogger<StrmFileService> logger)
+    public StrmFileService(
+        ILibraryManager libraryManager,
+        ILogger<StrmFileService> logger)
     {
+        _libraryManager = libraryManager;
         _logger = logger;
     }
 
@@ -129,6 +135,7 @@ public sealed partial class StrmFileService
                   .ConfigureAwait(false);
 
         LogWroteFile(_logger, absolutePath);
+        TriggerLibraryRefresh();
         return absolutePath;
     }
 
@@ -258,7 +265,25 @@ public sealed partial class StrmFileService
                   .ConfigureAwait(false);
 
         LogWroteFile(_logger, absolutePath);
+        TriggerLibraryRefresh();
         return absolutePath;
+    }
+
+    /// <summary>
+    /// Triggers an asynchronous Jellyfin library scan/refresh so newly created .strm files appear immediately.
+    /// </summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background library refresh is best-effort and must not fail file creation.")]
+    public void TriggerLibraryRefresh()
+    {
+        try
+        {
+            _ = Task.Run(() => _libraryManager.ValidateMediaLibrary(new Progress<double>(), CancellationToken.None));
+            LogTriggeredLibraryScan(_logger);
+        }
+        catch (Exception ex)
+        {
+            LogLibraryScanFailed(_logger, ex.Message);
+        }
     }
 
     /// <summary>
@@ -346,4 +371,10 @@ public sealed partial class StrmFileService
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Deleted .strm file: {Path}")]
     private static partial void LogDeletedFile(ILogger logger, string path);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Triggered background library scan/refresh")]
+    private static partial void LogTriggeredLibraryScan(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to trigger library scan: {ErrorMessage}")]
+    private static partial void LogLibraryScanFailed(ILogger logger, string errorMessage);
 }
