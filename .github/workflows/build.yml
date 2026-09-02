@@ -10,6 +10,8 @@ on:
 env:
   PLUGIN_NAME: Jellyfin.Plugin.Premio
   DOTNET_VERSION: "9.0.x"
+  ACTIONS_RUNNER_WARN_ON_FORCED_NODE_VERSION: "false"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # ---------------------------------------------------------------------------
