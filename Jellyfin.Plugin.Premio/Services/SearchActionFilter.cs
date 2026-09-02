@@ -181,28 +181,52 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // ---------------------------------------------------------------------
-        // 2. Intercept Virtual Item Details & Batch item requests
+        // 2. Intercept Virtual Item Details, Auxiliary endpoints & Batch item requests
         // ---------------------------------------------------------------------
-        if (HttpMethods.IsGet(context.HttpContext.Request.Method) &&
-            !requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase) &&
-            !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase) &&
-            !requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
+        if (HttpMethods.IsGet(context.HttpContext.Request.Method))
         {
             var requestedId = ExtractItemId(context);
             if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null && cachedItem.Id > 0)
             {
-                var detailsDto = await BuildItemDetailsDtoAsync(requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
-                if (detailsDto is not null)
+                if (requestPath.Contains("/Intros", StringComparison.OrdinalIgnoreCase) ||
+                    requestPath.Contains("/Similar", StringComparison.OrdinalIgnoreCase) ||
+                    requestPath.Contains("/SpecialFeatures", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (context.HttpContext.Request.Query.ContainsKey("ids"))
-                    {
-                        context.Result = new ObjectResult(new QueryResult<BaseItemDto>(0, 1, new[] { detailsDto }));
-                    }
-                    else
-                    {
-                        context.Result = new ObjectResult(detailsDto);
-                    }
+                    context.Result = new ObjectResult(new QueryResult<BaseItemDto>(0, 0, Array.Empty<BaseItemDto>()));
                     return;
+                }
+
+                if (requestPath.Contains("/ThemeMedia", StringComparison.OrdinalIgnoreCase) ||
+                    requestPath.Contains("/ThemeSongs", StringComparison.OrdinalIgnoreCase) ||
+                    requestPath.Contains("/ThemeVideos", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Result = new ObjectResult(new ThemeMediaResult
+                    {
+                        OwnerId = requestedId,
+                        Items = Array.Empty<BaseItemDto>(),
+                        SoundtrackSongsResult = new QueryResult<BaseItemDto>(0, 0, Array.Empty<BaseItemDto>()),
+                        ThemeVideosResult = new QueryResult<BaseItemDto>(0, 0, Array.Empty<BaseItemDto>())
+                    });
+                    return;
+                }
+
+                if (!requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase) &&
+                    !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase) &&
+                    !requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
+                {
+                    var detailsDto = await BuildItemDetailsDtoAsync(requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
+                    if (detailsDto is not null)
+                    {
+                        if (context.HttpContext.Request.Query.ContainsKey("ids"))
+                        {
+                            context.Result = new ObjectResult(new QueryResult<BaseItemDto>(0, 1, new[] { detailsDto }));
+                        }
+                        else
+                        {
+                            context.Result = new ObjectResult(detailsDto);
+                        }
+                        return;
+                    }
                 }
             }
         }
