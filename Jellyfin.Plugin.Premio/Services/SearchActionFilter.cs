@@ -204,8 +204,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         OwnerId = requestedId,
                         Items = Array.Empty<BaseItemDto>(),
-                        SoundtrackSongsResult = new QueryResult<BaseItemDto>(0, 0, Array.Empty<BaseItemDto>()),
-                        ThemeVideosResult = new QueryResult<BaseItemDto>(0, 0, Array.Empty<BaseItemDto>())
+                        TotalRecordCount = 0
                     });
                     return;
                 }
