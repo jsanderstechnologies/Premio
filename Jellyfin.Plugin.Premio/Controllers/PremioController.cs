@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Models;
 using Jellyfin.Plugin.Premio.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -49,6 +50,106 @@ public sealed partial class PremioController : ControllerBase
         _premiumizeClient = premiumizeClient;
         _strmService = strmService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Directly streams or 302-redirects to the resolved Premiumize CDN video stream.
+    /// Accessible anonymously so HTML5 video players without Jellyfin auth headers can stream seamlessly.
+    /// </summary>
+    [HttpGet("Stream/{itemId}")]
+    [HttpGet("Stream")]
+    [HttpHead("Stream/{itemId}")]
+    [HttpHead("Stream")]
+    [AllowAnonymous]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Stream resolution errors return appropriate HTTP status.")]
+    public async Task<IActionResult> Stream(
+        [FromRoute] Guid? itemId,
+        [FromQuery] string? mediaSourceId,
+        [FromQuery] string? infoHash,
+        CancellationToken cancellationToken)
+    {
+        var targetHash = !string.IsNullOrWhiteSpace(infoHash)
+            ? infoHash
+            : (!string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId != "select_stream" ? mediaSourceId : null);
+
+        var requestedGuid = itemId ?? Guid.Empty;
+        TmdbItem? cachedItem = null;
+
+        if (requestedGuid != Guid.Empty)
+        {
+            PremioMetadataCache.TryGetItem(requestedGuid, out cachedItem);
+        }
+
+        if (string.IsNullOrWhiteSpace(targetHash) && cachedItem is not null)
+        {
+            var isTv = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var imdbId = cachedItem.Id > 0
+                ? await _tmdbClient.GetExternalImdbIdAsync(cachedItem.MediaType ?? (isTv ? "tv" : "movie"), cachedItem.Id, cancellationToken).ConfigureAwait(false)
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(imdbId))
+            {
+                var streams = isTv
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+                if (streams.Count > 0)
+                {
+                    targetHash = streams[0].InfoHash;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(targetHash))
+        {
+            return NotFound(new { message = "Stream or infoHash not found." });
+        }
+
+        try
+        {
+            // 1. Send magnet to Premiumize
+            await _premiumizeClient.CreateTransferAsync(targetHash, cancellationToken).ConfigureAwait(false);
+            var directDl = await _premiumizeClient.CreateDirectDownloadAsync(targetHash, cancellationToken).ConfigureAwait(false);
+            var streamUrl = ResolvePlayableStreamUrl(directDl);
+
+            if (string.IsNullOrWhiteSpace(streamUrl))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
+            }
+
+            var title = cachedItem?.DisplayTitle ?? "Unknown Media";
+            var year = cachedItem?.Year;
+            var isTvShow = string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+
+            // 2. Write .strm file & poster
+            var strmPath = await _strmService.WriteMediaStrmFileAsync(
+                title,
+                year,
+                new Uri(streamUrl),
+                isTvShow,
+                1,
+                1,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(strmPath) && cachedItem?.PosterUrl is not null)
+            {
+                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(cachedItem.PosterUrl, cancellationToken).ConfigureAwait(false);
+                if (posterBytes is not null && posterBytes.Length > 0)
+                {
+                    await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            LogStreamResolved(_logger, title, targetHash, streamUrl);
+
+            // 3. 302 Redirect player to Premiumize CDN stream
+            return Redirect(streamUrl);
+        }
+        catch (Exception ex)
+        {
+            LogAddStreamFailed(_logger, targetHash, ex.Message);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+        }
     }
 
     /// <summary>
@@ -282,6 +383,9 @@ public sealed partial class PremioController : ControllerBase
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Added stream for '{Title}' -> '{Path}'")]
     private static partial void LogAddedStream(ILogger logger, string title, string path);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl}")]
+    private static partial void LogStreamResolved(ILogger logger, string title, string infoHash, string streamUrl);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Failed to add stream for '{Title}': {ErrorMessage}")]
     private static partial void LogAddStreamFailed(ILogger logger, string title, string errorMessage);

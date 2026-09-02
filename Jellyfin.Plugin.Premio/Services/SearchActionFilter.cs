@@ -303,7 +303,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = "select_stream",
                 Name = "Select a Stream",
-                Path = $"/Videos/{requestedId}/stream.mkv?MediaSourceId=select_stream",
+                Path = $"/Premio/Stream/{requestedId}?mediaSourceId=select_stream",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
@@ -325,7 +325,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = streamId,
                 Name = label,
-                Path = $"/Videos/{requestedId}/stream.mkv?MediaSourceId={streamId}",
+                Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={streamId}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
