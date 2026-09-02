@@ -234,7 +234,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Auto-save background task catches all exceptions to prevent unhandled thread faults.")]
     private async Task<BaseItemDto> BuildItemDetailsDtoAsync(
         Guid requestedId,
         TmdbItem item,
@@ -299,45 +298,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var displayTitle = details?.DisplayTitle ?? item.DisplayTitle;
         var yearStr = details?.Year ?? item.Year;
         var prodYear = int.TryParse(yearStr, out var y) ? (int?)y : null;
-
-        // Auto-save best stream into library on details page load
-        if (streams.Count > 0)
-        {
-            var bestStream = streams[0];
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    _ = _premiumizeClient.CreateTransferAsync(bestStream.InfoHash, cancellationToken);
-                    var directDl = await _premiumizeClient.CreateDirectDownloadAsync(bestStream.InfoHash, cancellationToken).ConfigureAwait(false);
-                    var streamUrl = directDl.Location;
-                    if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
-                    {
-                        streamUrl = directDl.Content[0].StreamLink ?? directDl.Content[0].Link;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(streamUrl))
-                    {
-                        var formattedTitle = !string.IsNullOrWhiteSpace(yearStr) ? $"{displayTitle} ({yearStr})" : displayTitle;
-                        var strmPath = await _strmService.WriteMediaStrmFileAsync(formattedTitle, new Uri(streamUrl), isTv, cancellationToken).ConfigureAwait(false);
-                        LogStreamResolved(_logger, displayTitle, bestStream.InfoHash, streamUrl);
-
-                        if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
-                        {
-                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(item.PosterUrl, cancellationToken).ConfigureAwait(false);
-                            if (posterBytes is not null && posterBytes.Length > 0)
-                            {
-                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogPlaybackResolutionFailed(_logger, displayTitle, ex.Message);
-                }
-            }, cancellationToken);
-        }
 
         var dto = new BaseItemDto
         {
@@ -408,20 +368,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
-            var mediaSources = new List<MediaSourceInfo>
-            {
-                new MediaSourceInfo
-                {
-                    Id = "select_stream",
-                    Name = "Select a Stream",
-                    Type = MediaSourceType.Default,
-                    IsRemote = true,
-                    SupportsDirectPlay = false,
-                    SupportsDirectStream = false,
-                    SupportsTranscoding = false
-                }
-            };
+            var mediaSources = new List<MediaSourceInfo>();
 
+            // If item already exists in library with a current stream, put "Current: ..." as the first option
             if (itemDto.MediaSources is not null && itemDto.MediaSources.Length > 0)
             {
                 foreach (var existing in itemDto.MediaSources)
@@ -430,12 +379,26 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var updatedName = !string.IsNullOrWhiteSpace(existing.Name) && !existing.Name.StartsWith("Current", StringComparison.OrdinalIgnoreCase)
                             ? $"Current: {existing.Name}"
-                            : existing.Name;
+                            : (string.IsNullOrWhiteSpace(existing.Name) ? "Current: Saved Stream" : existing.Name);
 
                         existing.Name = updatedName;
                         mediaSources.Add(existing);
                     }
                 }
+            }
+
+            if (mediaSources.Count == 0)
+            {
+                mediaSources.Add(new MediaSourceInfo
+                {
+                    Id = "select_stream",
+                    Name = "Select a Stream",
+                    Type = MediaSourceType.Default,
+                    IsRemote = true,
+                    SupportsDirectPlay = false,
+                    SupportsDirectStream = false,
+                    SupportsTranscoding = false
+                });
             }
 
             foreach (var stream in streams)
@@ -529,11 +492,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             // 1. Send magnet to Premiumize Transfer manager & DirectDL
             _ = _premiumizeClient.CreateTransferAsync(mediaSourceId, cancellationToken);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
-            var streamUrl = directDl.Location;
-            if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
-            {
-                streamUrl = directDl.Content[0].StreamLink ?? directDl.Content[0].Link;
-            }
+            var streamUrl = ResolvePlayableStreamUrl(directDl);
 
             if (string.IsNullOrWhiteSpace(streamUrl))
             {
@@ -851,6 +810,42 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         return (BaseItemKind.Movie, MediaType.Video, false, false);
+    }
+
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"
+    };
+
+    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl)
+    {
+        if (directDl.Content is not null && directDl.Content.Count > 0)
+        {
+            // 1. Filter out non-video files (.txt, .nfo, .exe, .jpg, .png, .srt, etc.) and pick the largest video file
+            var videoFiles = directDl.Content
+                .Where(f =>
+                {
+                    var ext = System.IO.Path.GetExtension(f.Path);
+                    return VideoExtensions.Contains(ext);
+                })
+                .OrderByDescending(f => f.Size)
+                .ToList();
+
+            if (videoFiles.Count > 0)
+            {
+                var bestFile = videoFiles[0];
+                return bestFile.StreamLink ?? bestFile.Link;
+            }
+
+            // 2. If no standard video extension matched, select the largest file by size (ignoring tiny text/nfo files)
+            var largestFile = directDl.Content.OrderByDescending(f => f.Size).FirstOrDefault();
+            if (largestFile is not null && largestFile.Size > 50 * 1024 * 1024)
+            {
+                return largestFile.StreamLink ?? largestFile.Link;
+            }
+        }
+
+        return directDl.Location;
     }
 
     private static Guid GenerateDeterministicGuid(string id)

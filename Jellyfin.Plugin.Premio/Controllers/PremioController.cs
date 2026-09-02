@@ -194,11 +194,7 @@ public sealed partial class PremioController : ControllerBase
             _ = _premiumizeClient.CreateTransferAsync(src, cancellationToken);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
 
-            var streamUrl = directDl.Location;
-            if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
-            {
-                streamUrl = directDl.Content[0].StreamLink ?? directDl.Content[0].Link;
-            }
+            var streamUrl = ResolvePlayableStreamUrl(directDl);
 
             if (string.IsNullOrWhiteSpace(streamUrl))
             {
@@ -235,8 +231,7 @@ public sealed partial class PremioController : ControllerBase
             return Ok(new
             {
                 success = true,
-                title = formattedTitle,
-                strmPath = strmPath,
+                path = strmPath,
                 streamUrl = streamUrl
             });
         }
@@ -245,6 +240,40 @@ public sealed partial class PremioController : ControllerBase
             LogAddStreamFailed(_logger, request.Title, ex.Message);
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
         }
+    }
+
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"
+    };
+
+    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl)
+    {
+        if (directDl.Content is not null && directDl.Content.Count > 0)
+        {
+            var videoFiles = directDl.Content
+                .Where(f =>
+                {
+                    var ext = System.IO.Path.GetExtension(f.Path);
+                    return VideoExtensions.Contains(ext);
+                })
+                .OrderByDescending(f => f.Size)
+                .ToList();
+
+            if (videoFiles.Count > 0)
+            {
+                var bestFile = videoFiles[0];
+                return bestFile.StreamLink ?? bestFile.Link;
+            }
+
+            var largestFile = directDl.Content.OrderByDescending(f => f.Size).FirstOrDefault();
+            if (largestFile is not null && largestFile.Size > 50 * 1024 * 1024)
+            {
+                return largestFile.StreamLink ?? largestFile.Link;
+            }
+        }
+
+        return directDl.Location;
     }
 
     // -------------------------------------------------------------------------
