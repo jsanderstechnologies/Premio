@@ -299,6 +299,45 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var yearStr = details?.Year ?? item.Year;
         var prodYear = int.TryParse(yearStr, out var y) ? (int?)y : null;
 
+        // Auto-save best stream into library on details page load
+        if (streams.Count > 0)
+        {
+            var bestStream = streams[0];
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _ = _premiumizeClient.CreateTransferAsync(bestStream.InfoHash, cancellationToken);
+                    var directDl = await _premiumizeClient.CreateDirectDownloadAsync(bestStream.InfoHash, cancellationToken).ConfigureAwait(false);
+                    var streamUrl = directDl.Location;
+                    if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
+                    {
+                        streamUrl = directDl.Content[0].StreamLink ?? directDl.Content[0].Link;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(streamUrl))
+                    {
+                        var formattedTitle = !string.IsNullOrWhiteSpace(yearStr) ? $"{displayTitle} ({yearStr})" : displayTitle;
+                        var strmPath = await _strmService.WriteMediaStrmFileAsync(formattedTitle, new Uri(streamUrl), isTv, cancellationToken).ConfigureAwait(false);
+                        LogStreamResolved(_logger, displayTitle, bestStream.InfoHash, streamUrl);
+
+                        if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
+                        {
+                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(item.PosterUrl, cancellationToken).ConfigureAwait(false);
+                            if (posterBytes is not null && posterBytes.Length > 0)
+                            {
+                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogPlaybackResolutionFailed(_logger, displayTitle, ex.Message);
+                }
+            }, cancellationToken);
+        }
+
         var dto = new BaseItemDto
         {
             Id = requestedId,

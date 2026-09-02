@@ -191,6 +191,7 @@ public sealed partial class PremioController : ControllerBase
         try
         {
             var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!.OriginalString;
+            _ = _premiumizeClient.CreateTransferAsync(src, cancellationToken);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
 
             var streamUrl = directDl.Location;
