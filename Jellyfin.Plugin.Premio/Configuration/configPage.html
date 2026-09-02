@@ -2,77 +2,23 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Premio</title>
-    <style>
-        .premio-tabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 1.5em; gap: 0.5em; }
-        .premio-tab-btn { background: none; border: none; padding: 0.8em 1.5em; color: #aaa; cursor: pointer; font-size: 1.1em; font-weight: 500; border-bottom: 3px solid transparent; transition: all 0.2s ease; }
-        .premio-tab-btn.active { color: #00a4dc; border-bottom-color: #00a4dc; }
-        .premio-tab-content { display: none; }
-        .premio-tab-content.active { display: block; }
-        .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.5em; margin-top: 1.5em; }
-        .poster-card { background: rgba(0,0,0,0.3); border-radius: 8px; overflow: hidden; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; border: 1px solid rgba(255,255,255,0.05); }
-        .poster-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.5); border-color: #00a4dc; }
-        .poster-img { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #1a1a1a; display: block; }
-        .poster-info { padding: 0.8em; }
-        .poster-title { font-weight: 600; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.3em; }
-        .poster-meta { color: #888; font-size: 0.85em; display: flex; justify-content: space-between; }
-        .detail-modal { display: none; position: fixed; z-index: 9999; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); overflow-y: auto; padding: 2em 1em; box-sizing: border-box; }
-        .modal-body { background: #1e1e1e; max-width: 900px; margin: auto; border-radius: 12px; overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.1); position: relative; }
-        .modal-header-bg { width: 100%; height: 260px; object-fit: cover; filter: brightness(0.4); }
-        .modal-close-btn { position: absolute; top: 1em; right: 1em; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 50%; width: 36px; height: 36px; font-size: 1.3em; cursor: pointer; z-index: 10; display: flex; align-items: center; justify-content: center; }
-        .modal-content-inner { padding: 1.5em; margin-top: -120px; position: relative; }
-        .modal-meta-row { display: flex; gap: 1.5em; align-items: flex-end; margin-bottom: 1.5em; }
-        .modal-poster { width: 140px; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); border: 2px solid rgba(255,255,255,0.1); flex-shrink: 0; }
-        .badge { display: inline-block; padding: 0.25em 0.6em; border-radius: 4px; font-size: 0.75em; font-weight: 700; text-transform: uppercase; margin-right: 0.5em; }
-        .badge-4k { background: #e50914; color: #fff; }
-        .badge-1080p { background: #00a4dc; color: #fff; }
-        .badge-720p { background: #555; color: #fff; }
-        .badge-cached { background: #2e7d32; color: #fff; }
-        .badge-cloud { background: #f57c00; color: #fff; }
-        .stream-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 1em; margin-bottom: 0.8em; display: flex; justify-content: space-between; align-items: center; gap: 1em; }
-        .stream-card:hover { border-color: #00a4dc; background: rgba(0,164,220,0.05); }
-        .stream-title { font-weight: 600; font-size: 0.95em; word-break: break-all; margin-bottom: 0.4em; }
-        .stream-sub { color: #888; font-size: 0.85em; display: flex; gap: 1em; align-items: center; }
-    </style>
+    <title>Premio Settings</title>
 </head>
 <body>
     <div id="PremioConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
         <div data-role="content">
             <div class="content-primary">
-                <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em;">
-                    <h2 class="sectionTitle" style="margin: 0;">Premio Media Streamer</h2>
-                </div>
-
-                <!-- Tab Navigation -->
-                <div class="premio-tabs">
-                    <button type="button" class="premio-tab-btn active" onclick="PremioUI.switchTab('discoverTab')">🔍 Search & Stream</button>
-                    <button type="button" class="premio-tab-btn" onclick="PremioUI.switchTab('settingsTab')">⚙️ Settings</button>
-                </div>
-
-                <!-- TAB 1: Discovery & Streams -->
-                <div id="discoverTab" class="premio-tab-content active">
-                    <div style="display: flex; gap: 1em; align-items: center; margin-bottom: 1.5em;">
-                        <div class="inputContainer" style="flex-grow: 1; margin: 0;">
-                            <input id="txtPremioSearch" type="text" is="emby-input" placeholder="Search movies or TV shows (e.g. Full Metal Jacket, Breaking Bad)..." style="font-size: 1.1em; padding: 0.8em;" />
-                        </div>
-                        <button type="button" is="emby-button" class="raised button-submit emby-button" onclick="PremioUI.performSearch()">
-                            <span>Search</span>
-                        </button>
+                <form id="PremioConfigForm">
+                    <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1.5em;">
+                        <h2 class="sectionTitle" style="margin: 0;">Premio Settings</h2>
+                        <a is="emby-linkbutton" class="raised button-alt headerHelpButton emby-button" target="_blank" href="https://www.premiumize.me/account" style="margin-left: 1.5em;">Get API Key</a>
                     </div>
 
-                    <div id="searchSpinner" style="display: none; text-align: center; padding: 2em; color: #888;">Searching TMDB...</div>
-                    <div id="posterGrid" class="poster-grid"></div>
-                </div>
+                    <!-- Account & Library Paths -->
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Account & Library Folders</h3>
 
-                <!-- TAB 2: Plugin Settings -->
-                <div id="settingsTab" class="premio-tab-content">
-                    <form id="PremioConfigForm">
-                        <div class="sectionTitleContainer flex align-items-center">
-                            <h3 class="sectionTitle">Account & Paths</h3>
-                            <a is="emby-linkbutton" class="raised button-alt headerHelpButton emby-button" target="_blank" href="https://www.premiumize.me/account" style="margin-left: 1em;">Get API Key</a>
-                        </div>
-
-                        <!-- API Key -->
+                        <!-- Premiumize API Key -->
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtApiKey">Premiumize API Key</label>
                             <input id="txtApiKey" name="txtApiKey" type="password" is="emby-input" required />
@@ -83,21 +29,21 @@
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtMoviesStrmDir">Movies Output Directory</label>
                             <input id="txtMoviesStrmDir" name="txtMoviesStrmDir" type="text" is="emby-input" />
-                            <div class="fieldDescription">Directory for movie <code>.strm</code> files (e.g. <code>/media/movies</code> or <code>C:\Media\Movies</code>).</div>
+                            <div class="fieldDescription">Target directory for movie <code>.strm</code> files (e.g. <code>/media/movies</code> or <code>C:\Media\Movies</code>).</div>
                         </div>
 
                         <!-- TV Shows Path -->
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtTvShowsStrmDir">TV Shows Output Directory</label>
                             <input id="txtTvShowsStrmDir" name="txtTvShowsStrmDir" type="text" is="emby-input" />
-                            <div class="fieldDescription">Directory for TV show <code>.strm</code> files (e.g. <code>/media/tv</code> or <code>C:\Media\TV</code>).</div>
+                            <div class="fieldDescription">Target directory for TV show <code>.strm</code> files (e.g. <code>/media/tv</code> or <code>C:\Media\TV</code>).</div>
                         </div>
 
                         <!-- Default STRM Path -->
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtStrmOutputDir">Default Output Directory (Optional)</label>
                             <input id="txtStrmOutputDir" name="txtStrmOutputDir" type="text" is="emby-input" />
-                            <div class="fieldDescription">Fallback directory for unclassified items.</div>
+                            <div class="fieldDescription">Fallback directory for unclassified media items.</div>
                         </div>
 
                         <!-- Overwrite Checkbox -->
@@ -106,262 +52,58 @@
                                 <input id="chkOverwrite" name="chkOverwrite" type="checkbox" is="emby-checkbox" />
                                 <span>Overwrite existing .strm files</span>
                             </label>
-                        </div>
-
-                        <!-- Advanced Section -->
-                        <div class="verticalSection">
-                            <h3 class="sectionTitle">Advanced Settings</h3>
-
-                            <!-- TMDB API Key -->
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API Key (Optional)</label>
-                                <input id="txtTmdbApiKey" name="txtTmdbApiKey" type="password" is="emby-input" />
-                                <div class="fieldDescription">Personal TMDB (v3) API key. Leave empty to use the built-in key. (<a href="https://www.themoviedb.org/settings/api" target="_blank" class="button-link">Get Key</a>)</div>
-                            </div>
-
-                            <!-- API Base URL -->
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtApiBaseUrl">API Base URL</label>
-                                <input id="txtApiBaseUrl" name="txtApiBaseUrl" type="text" is="emby-input" />
-                            </div>
-
-                            <!-- Max Search Results -->
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results</label>
-                                <input id="txtMaxSearchResults" name="txtMaxSearchResults" type="number" is="emby-input" min="1" max="500" />
-                            </div>
-
-                            <!-- Request Timeout -->
-                            <div class="inputContainer">
-                                <label class="inputLabel inputLabelUnfocused" for="txtRequestTimeout">Request Timeout (Seconds)</label>
-                                <input id="txtRequestTimeout" name="txtRequestTimeout" type="number" is="emby-input" min="5" max="120" />
-                            </div>
-                        </div>
-
-                        <!-- Save Button -->
-                        <div>
-                            <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                                <span>Save Settings</span>
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Details & Torrentio Streams Modal -->
-        <div id="detailModal" class="detail-modal">
-            <div class="modal-body">
-                <button type="button" class="modal-close-btn" onclick="PremioUI.closeModal()">&times;</button>
-                <img id="modalBackdrop" class="modal-header-bg" src="" alt="" />
-                
-                <div class="modal-content-inner">
-                    <div class="modal-meta-row">
-                        <img id="modalPoster" class="modal-poster" src="" alt="" />
-                        <div>
-                            <h2 id="modalTitle" style="margin: 0 0 0.3em 0; font-size: 1.8em;"></h2>
-                            <div id="modalMeta" style="color: #aaa; margin-bottom: 0.5em;"></div>
-                            <p id="modalOverview" style="font-size: 0.95em; line-height: 1.4; color: #ddd; margin: 0;"></p>
+                            <div class="fieldDescription checkboxFieldDescription">When enabled, selecting an alternative stream replaces existing <code>.strm</code> files with the new stream URL.</div>
                         </div>
                     </div>
 
-                    <!-- TV Season/Episode Selector -->
-                    <div id="tvSelectorContainer" style="display: none; margin-bottom: 1.5em; background: rgba(0,0,0,0.3); padding: 1em; border-radius: 8px; gap: 1em; align-items: center;">
-                        <label>Season: <input id="numSeason" type="number" value="1" min="1" style="width: 60px; padding: 0.4em; border-radius: 4px; border: 1px solid #555; background: #222; color: #fff;" /></label>
-                        <label>Episode: <input id="numEpisode" type="number" value="1" min="1" style="width: 60px; padding: 0.4em; border-radius: 4px; border: 1px solid #555; background: #222; color: #fff;" /></label>
-                        <button type="button" is="emby-button" class="raised emby-button" onclick="PremioUI.reloadTvStreams()"><span>Refresh Episode Streams</span></button>
+                    <!-- Advanced Settings -->
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Advanced Settings</h3>
+
+                        <!-- TMDB API Key -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API Key (Optional)</label>
+                            <input id="txtTmdbApiKey" name="txtTmdbApiKey" type="password" is="emby-input" />
+                            <div class="fieldDescription">Personal TMDB (v3) API key. Leave blank to use the built-in key. (<a href="https://www.themoviedb.org/settings/api" target="_blank" class="button-link">Get Key</a>)</div>
+                        </div>
+
+                        <!-- API Base URL -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtApiBaseUrl">API Base URL</label>
+                            <input id="txtApiBaseUrl" name="txtApiBaseUrl" type="text" is="emby-input" />
+                        </div>
+
+                        <!-- Max Search Results -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Max Search Results</label>
+                            <input id="txtMaxSearchResults" name="txtMaxSearchResults" type="number" is="emby-input" min="1" max="500" />
+                        </div>
+
+                        <!-- Request Timeout -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtRequestTimeout">Request Timeout (Seconds)</label>
+                            <input id="txtRequestTimeout" name="txtRequestTimeout" type="number" is="emby-input" min="5" max="120" />
+                        </div>
                     </div>
 
-                    <!-- Streams List -->
-                    <h3 style="margin-top: 1.5em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5em;">Available Torrentio Streams</h3>
-                    <div id="streamSpinner" style="display: none; text-align: center; padding: 2em; color: #888;">Fetching Torrentio streams & checking Premiumize cloud cache...</div>
-                    <div id="streamsContainer"></div>
-                </div>
+                    <!-- Save Button -->
+                    <div style="margin-top: 2em;">
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save Settings</span>
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
 
         <script type="text/javascript">
-            const PremioUI = {
-                pluginId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                currentItem: null,
+            const PremioPluginId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
-                switchTab: function(tabId) {
-                    document.querySelectorAll('.premio-tab-btn').forEach(b => b.classList.remove('active'));
-                    document.querySelectorAll('.premio-tab-content').forEach(c => c.classList.remove('active'));
-                    event.target.classList.add('active');
-                    document.getElementById(tabId).classList.add('active');
-                },
-
-                performSearch: function() {
-                    const query = document.getElementById('txtPremioSearch').value.trim();
-                    if (!query) return;
-
-                    const grid = document.getElementById('posterGrid');
-                    const spinner = document.getElementById('searchSpinner');
-                    grid.innerHTML = '';
-                    spinner.style.display = 'block';
-
-                    ApiClient.getJSON(ApiClient.getUrl('/Premio/Search', { q: query })).then(function(items) {
-                        spinner.style.display = 'none';
-                        if (!items || items.length === 0) {
-                            grid.innerHTML = '<div style="color: #888; grid-column: 1/-1; text-align: center; padding: 2em;">No results found on TMDB.</div>';
-                            return;
-                        }
-
-                        items.forEach(function(item) {
-                            if (item.media_type === 'person') return;
-                            const card = document.createElement('div');
-                            card.className = 'poster-card';
-                            const posterUrl = item.poster_path ? 'https://image.tmdb.org/t/p/w342' + item.poster_path : 'https://raw.githubusercontent.com/jsanderstechnologies/Premio/master/assets/premio-logo.png';
-
-                            card.innerHTML = `
-                                <img class="poster-img" src="${posterUrl}" alt="${item.DisplayTitle || item.name || item.title}" />
-                                <div class="poster-info">
-                                    <div class="poster-title">${item.DisplayTitle || item.name || item.title}</div>
-                                    <div class="poster-meta">
-                                        <span>${item.Year || ''}</span>
-                                        <span style="text-transform: uppercase;">${item.media_type || 'movie'}</span>
-                                    </div>
-                                </div>
-                            `;
-                            card.onclick = function() { PremioUI.openDetails(item); };
-                            grid.appendChild(card);
-                        });
-                    }).catch(function(err) {
-                        spinner.style.display = 'none';
-                        Dashboard.alert({ message: 'Search failed: ' + (err.message || 'Unknown error') });
-                    });
-                },
-
-                openDetails: function(item) {
-                    PremioUI.currentItem = item;
-                    const isTv = item.media_type === 'tv';
-                    document.getElementById('detailModal').style.display = 'block';
-                    document.getElementById('modalTitle').textContent = item.DisplayTitle || item.name || item.title;
-                    document.getElementById('modalOverview').textContent = item.overview || 'No overview available.';
-                    document.getElementById('modalMeta').textContent = `${item.Year || ''} • ${isTv ? 'TV Series' : 'Movie'} • Rating: ${item.vote_average || 'N/A'}`;
-
-                    const posterUrl = item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : '';
-                    const backdropUrl = item.backdrop_path ? 'https://image.tmdb.org/t/p/w1280' + item.backdrop_path : '';
-                    document.getElementById('modalPoster').src = posterUrl;
-                    document.getElementById('modalBackdrop').src = backdropUrl;
-
-                    document.getElementById('tvSelectorContainer').style.display = isTv ? 'flex' : 'none';
-
-                    // Fetch full TMDB details with IMDB ID
-                    Dashboard.showLoadingMsg();
-                    ApiClient.getJSON(ApiClient.getUrl('/Premio/Details', { type: isTv ? 'tv' : 'movie', id: item.id })).then(function(details) {
-                        Dashboard.hideLoadingMsg();
-                        PremioUI.currentItem.imdb_id = details.imdb_id;
-                        PremioUI.fetchStreams(details.imdb_id, isTv, 1, 1);
-                    }).catch(function() {
-                        Dashboard.hideLoadingMsg();
-                        Dashboard.alert({ message: 'Could not fetch IMDB details from TMDB.' });
-                    });
-                },
-
-                reloadTvStreams: function() {
-                    const season = parseInt(document.getElementById('numSeason').value, 10) || 1;
-                    const episode = parseInt(document.getElementById('numEpisode').value, 10) || 1;
-                    if (PremioUI.currentItem && PremioUI.currentItem.imdb_id) {
-                        PremioUI.fetchStreams(PremioUI.currentItem.imdb_id, true, season, episode);
-                    }
-                },
-
-                fetchStreams: function(imdbId, isTv, season, episode) {
-                    const container = document.getElementById('streamsContainer');
-                    const spinner = document.getElementById('streamSpinner');
-                    container.innerHTML = '';
-                    spinner.style.display = 'block';
-
-                    if (!imdbId) {
-                        spinner.style.display = 'none';
-                        container.innerHTML = '<div style="color: #888; padding: 1em;">No IMDB ID found for this title. Cannot query Torrentio.</div>';
-                        return;
-                    }
-
-                    const params = { type: isTv ? 'tv' : 'movie', imdbId: imdbId, season: season, episode: episode };
-                    ApiClient.getJSON(ApiClient.getUrl('/Premio/Streams', params)).then(function(streams) {
-                        spinner.style.display = 'none';
-                        if (!streams || streams.length === 0) {
-                            container.innerHTML = '<div style="color: #888; padding: 1em;">No torrent streams found on Torrentio.</div>';
-                            return;
-                        }
-
-                        streams.forEach(function(stream) {
-                            const card = document.createElement('div');
-                            card.className = 'stream-card';
-
-                            const qualClass = stream.Quality.includes('4K') || stream.Quality.includes('2160') ? 'badge-4k' : (stream.Quality.includes('1080') ? 'badge-1080p' : 'badge-720p');
-                            const cacheBadge = stream.IsCached ? '<span class="badge badge-cached">🟢 Instant Cached</span>' : '<span class="badge badge-cloud">☁️ Cloud Download</span>';
-
-                            card.innerHTML = `
-                                <div style="flex-grow: 1;">
-                                    <div class="stream-title">
-                                        <span class="badge ${qualClass}">${stream.Quality}</span>
-                                        ${cacheBadge}
-                                        ${stream.CleanReleaseName}
-                                    </div>
-                                    <div class="stream-sub">
-                                        <span>💾 ${stream.FileSize || 'Unknown'}</span>
-                                        <span>👤 ${stream.Seeders || 0} seeders</span>
-                                    </div>
-                                </div>
-                                <button type="button" is="emby-button" class="raised button-submit emby-button" style="white-space: nowrap;">
-                                    <span>➕ Add to Library</span>
-                                </button>
-                            `;
-
-                            card.querySelector('button').onclick = function() {
-                                PremioUI.addStream(stream, isTv, season, episode);
-                            };
-                            container.appendChild(card);
-                        });
-                    }).catch(function(err) {
-                        spinner.style.display = 'none';
-                        container.innerHTML = '<div style="color: #f44336; padding: 1em;">Error fetching streams: ' + (err.message || 'Unknown error') + '</div>';
-                    });
-                },
-
-                addStream: function(stream, isTv, season, episode) {
-                    Dashboard.showLoadingMsg();
-                    const item = PremioUI.currentItem;
-                    const posterUrl = item.poster_path ? 'https://image.tmdb.org/t/p/w500' + item.poster_path : '';
-
-                    const payload = {
-                        title: item.DisplayTitle || item.name || item.title,
-                        year: item.Year,
-                        isTv: isTv,
-                        season: isTv ? season : null,
-                        episode: isTv ? episode : null,
-                        infoHash: stream.infoHash,
-                        posterUrl: posterUrl
-                    };
-
-                    ApiClient.ajax({
-                        type: 'POST',
-                        url: ApiClient.getUrl('/Premio/AddStream'),
-                        data: JSON.stringify(payload),
-                        contentType: 'application/json'
-                    }).then(function(res) {
-                        Dashboard.hideLoadingMsg();
-                        Dashboard.alert({ message: `Successfully added "${payload.title}" to your Jellyfin library!\n\nFile: ${res.strmPath}` });
-                    }).catch(function(err) {
-                        Dashboard.hideLoadingMsg();
-                        Dashboard.alert({ message: 'Failed to add stream: ' + (err.message || 'Check your Premiumize API key and folder settings.') });
-                    });
-                },
-
-                closeModal: function() {
-                    document.getElementById('detailModal').style.display = 'none';
-                }
-            };
-
-            // Register Jellyfin pageshow and form submit
+            // Load and save settings
             (function () {
                 document.querySelector('#PremioConfigPage').addEventListener('pageshow', function () {
                     Dashboard.showLoadingMsg();
-                    ApiClient.getPluginConfiguration(PremioUI.pluginId).then(function (config) {
+                    ApiClient.getPluginConfiguration(PremioPluginId).then(function (config) {
                         document.querySelector('#txtApiKey').value = config.ApiKey || '';
                         document.querySelector('#txtMoviesStrmDir').value = config.MoviesStrmDirectory || '';
                         document.querySelector('#txtTvShowsStrmDir').value = config.TvShowsStrmDirectory || '';
@@ -381,7 +123,7 @@
                     e.preventDefault();
                     Dashboard.showLoadingMsg();
 
-                    ApiClient.getPluginConfiguration(PremioUI.pluginId).then(function (config) {
+                    ApiClient.getPluginConfiguration(PremioPluginId).then(function (config) {
                         config.ApiKey = document.querySelector('#txtApiKey').value;
                         config.MoviesStrmDirectory = document.querySelector('#txtMoviesStrmDir').value;
                         config.TvShowsStrmDirectory = document.querySelector('#txtTvShowsStrmDir').value;
@@ -392,21 +134,13 @@
                         config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10) || 50;
                         config.RequestTimeoutSeconds = parseInt(document.querySelector('#txtRequestTimeout').value, 10) || 30;
 
-                        ApiClient.updatePluginConfiguration(PremioUI.pluginId, config).then(function (result) {
+                        ApiClient.updatePluginConfiguration(PremioPluginId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });
                     }).catch(function () {
                         Dashboard.hideLoadingMsg();
                     });
                     return false;
-                });
-
-                // Trigger search on Enter key
-                document.getElementById('txtPremioSearch').addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        PremioUI.performSearch();
-                    }
                 });
             })();
         </script>
