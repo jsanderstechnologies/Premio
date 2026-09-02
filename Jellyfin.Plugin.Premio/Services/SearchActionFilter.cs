@@ -21,12 +21,13 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints and /Items with searchTerm) to return clean TMDB results and dynamically serve TMDB poster images.
+/// (/Search/Hints and /Items with searchTerm) to return strictly categorized TMDB results (Movies, Shows, People, Artists)
+/// and dynamically serves TMDB poster and profile images.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
     private static readonly Regex ItemImageRegex = new(
-        @"Items/([a-fA-F0-9\-]{36})/Images",
+        @"Items/([a-fA-F0-9\-]{32,36})/Images",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly TmdbClient _tmdbClient;
@@ -57,27 +58,23 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(next);
 
         // 1. Intercept Image requests for virtual TMDB items
-        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-        if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
+        var requestedId = ExtractItemId(context);
+        if (requestedId != Guid.Empty)
         {
-            var match = ItemImageRegex.Match(requestPath);
-            if (match.Success && Guid.TryParse(match.Groups[1].Value, out var requestedId))
+            if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
             {
-                if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
-                {
-                    context.Result = new FileContentResult(cachedBytes, "image/jpeg");
-                    return;
-                }
+                context.Result = new FileContentResult(cachedBytes, "image/jpeg");
+                return;
+            }
 
-                if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+            if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+            {
+                var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, context.HttpContext.RequestAborted).ConfigureAwait(false);
+                if (downloadedBytes is not null && downloadedBytes.Length > 0)
                 {
-                    var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, context.HttpContext.RequestAborted).ConfigureAwait(false);
-                    if (downloadedBytes is not null && downloadedBytes.Length > 0)
-                    {
-                        PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
-                        context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
-                        return;
-                    }
+                    PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
+                    context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
+                    return;
                 }
             }
         }
@@ -102,15 +99,18 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
+            var itemTypesParam = context.HttpContext.Request.Query["includeItemTypes"].ToString();
+            var allowedTypes = ParseAllowedTypes(itemTypesParam);
+
             if (executedContext.Result is ObjectResult objectResult && objectResult.Value is not null)
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    objectResult.Value = EnrichSearchHints(hintResult, tmdbResults);
+                    objectResult.Value = EnrichSearchHints(hintResult, tmdbResults, allowedTypes);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    objectResult.Value = EnrichQueryResult(itemResult, tmdbResults);
+                    objectResult.Value = EnrichQueryResult(itemResult, tmdbResults, allowedTypes);
                 }
             }
         }
@@ -120,24 +120,106 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
+    private static Guid ExtractItemId(ActionExecutingContext context)
+    {
+        if (context.ActionArguments.TryGetValue("itemId", out var val) && val is not null)
+        {
+            if (val is Guid g)
+            {
+                return g;
+            }
+
+            if (val is string s && Guid.TryParse(s, out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
+        if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
+        {
+            var match = ItemImageRegex.Match(requestPath);
+            if (match.Success && Guid.TryParse(match.Groups[1].Value, out var matchedGuid))
+            {
+                return matchedGuid;
+            }
+        }
+
+        return Guid.Empty;
+    }
+
+    private static HashSet<string>? ParseAllowedTypes(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            set.Add(part);
+        }
+
+        return set.Count > 0 ? set : null;
+    }
+
+    private static bool MatchesFilter(TmdbItem item, HashSet<string>? allowedTypes)
+    {
+        if (allowedTypes is null)
+        {
+            return true;
+        }
+
+        if (string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
+        {
+            return allowedTypes.Contains("Movie");
+        }
+
+        if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+        {
+            return allowedTypes.Contains("Series") || allowedTypes.Contains("Episode");
+        }
+
+        if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+        {
+            if (allowedTypes.Contains("Person"))
+            {
+                return true;
+            }
+
+            if (allowedTypes.Contains("MusicArtist"))
+            {
+                return string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
     private static SearchHintResult EnrichSearchHints(
         SearchHintResult hintResult,
-        IReadOnlyList<TmdbItem> tmdbItems)
+        IReadOnlyList<TmdbItem> tmdbItems,
+        HashSet<string>? allowedTypes)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
 
         foreach (var tmdbItem in tmdbItems)
         {
-            if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            if (!MatchesFilter(tmdbItem, allowedTypes))
             {
                 continue;
             }
 
-            var isTv = string.Equals(tmdbItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var displayName = !string.IsNullOrWhiteSpace(tmdbItem.Year)
+            var (kind, mediaType, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+
+            var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
                 : tmdbItem.DisplayTitle;
 
@@ -147,10 +229,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = itemGuid,
                 Name = displayName,
-                Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
-                MediaType = MediaType.Video,
+                Type = kind,
+                MediaType = mediaType,
                 PrimaryImageTag = "premio_" + tmdbItem.Id,
-                PrimaryImageAspectRatio = 2.0 / 3.0,
+                PrimaryImageAspectRatio = isPerson ? 1.0 : 2.0 / 3.0,
                 ProductionYear = prodYear
             };
 
@@ -162,23 +244,25 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     private QueryResult<BaseItemDto> EnrichQueryResult(
         QueryResult<BaseItemDto> queryResult,
-        IReadOnlyList<TmdbItem> tmdbItems)
+        IReadOnlyList<TmdbItem> tmdbItems,
+        HashSet<string>? allowedTypes)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
         var serverId = _appHost.SystemId;
 
         foreach (var tmdbItem in tmdbItems)
         {
-            if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            if (!MatchesFilter(tmdbItem, allowedTypes))
             {
                 continue;
             }
 
-            var isTv = string.Equals(tmdbItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var displayName = !string.IsNullOrWhiteSpace(tmdbItem.Year)
+            var (kind, mediaType, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+
+            var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
                 : tmdbItem.DisplayTitle;
 
@@ -189,11 +273,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Id = itemGuid,
                 ServerId = serverId,
                 Name = displayName,
-                Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
-                MediaType = MediaType.Video,
+                Type = kind,
+                MediaType = mediaType,
                 Overview = tmdbItem.Overview,
                 ProductionYear = prodYear,
-                PrimaryImageAspectRatio = 2.0 / 3.0,
+                PrimaryImageAspectRatio = isPerson ? 1.0 : 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
                 LocationType = LocationType.Remote,
                 IsFolder = false
@@ -203,6 +287,27 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
+    }
+
+    private static (BaseItemKind Kind, MediaType MediaType, bool IsPerson) ResolveMediaTypes(
+        TmdbItem item,
+        HashSet<string>? allowedTypes)
+    {
+        if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+        {
+            return (BaseItemKind.Series, MediaType.Video, false);
+        }
+
+        if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+        {
+            var isMusic = (allowedTypes is not null && allowedTypes.Contains("MusicArtist")) ||
+                          string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
+
+            return (isMusic ? BaseItemKind.MusicArtist : BaseItemKind.Person, MediaType.Unknown, true);
+        }
+
+        return (BaseItemKind.Movie, MediaType.Video, false);
     }
 
     private static Guid GenerateDeterministicGuid(string id)

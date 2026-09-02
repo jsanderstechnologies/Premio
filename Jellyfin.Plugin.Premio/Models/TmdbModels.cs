@@ -55,6 +55,14 @@ public sealed class TmdbItem
     [JsonPropertyName("backdrop_path")]
     public string? BackdropPath { get; init; }
 
+    /// <summary>Gets the profile path for people on TMDB CDN.</summary>
+    [JsonPropertyName("profile_path")]
+    public string? ProfilePath { get; init; }
+
+    /// <summary>Gets the known for department (e.g. "Acting", "Directing", "Music").</summary>
+    [JsonPropertyName("known_for_department")]
+    public string? KnownForDepartment { get; init; }
+
     /// <summary>Gets the plot overview.</summary>
     [JsonPropertyName("overview")]
     public string? Overview { get; init; }
@@ -72,7 +80,7 @@ public sealed class TmdbItem
     public double VoteAverage { get; init; }
 
     /// <summary>
-    /// Gets the resolved display title of the movie or TV show.
+    /// Gets the resolved display title of the movie, TV show, or person.
     /// </summary>
     [JsonIgnore]
     public string DisplayTitle => !string.IsNullOrWhiteSpace(Title) ? Title : (Name ?? string.Empty);
@@ -91,12 +99,19 @@ public sealed class TmdbItem
     }
 
     /// <summary>
-    /// Gets the absolute full-resolution poster URI.
+    /// Gets the absolute full-resolution poster/profile URI.
     /// </summary>
     [JsonIgnore]
-    public Uri? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
-        ? new Uri($"https://image.tmdb.org/t/p/w500{PosterPath}")
-        : null;
+    public Uri? PosterUrl
+    {
+        get
+        {
+            var path = !string.IsNullOrWhiteSpace(PosterPath) ? PosterPath : ProfilePath;
+            return !string.IsNullOrWhiteSpace(path)
+                ? new Uri($"https://image.tmdb.org/t/p/w500{path}")
+                : null;
+        }
+    }
 
     /// <summary>
     /// Gets the absolute backdrop URI.
