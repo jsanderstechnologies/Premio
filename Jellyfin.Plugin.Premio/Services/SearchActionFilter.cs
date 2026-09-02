@@ -282,11 +282,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = "select_stream",
                 Name = "Select a Stream",
+                Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
+                Container = "mkv",
+                VideoType = VideoType.VideoFile,
                 IsRemote = true,
-                SupportsDirectPlay = false,
-                SupportsDirectStream = false,
-                SupportsTranscoding = false
+                SupportsDirectPlay = true,
+                SupportsDirectStream = true,
+                SupportsTranscoding = true
             }
         };
 
