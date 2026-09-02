@@ -234,6 +234,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Auto-save background task catches all exceptions to prevent unhandled thread faults.")]
     private async Task<BaseItemDto> BuildItemDetailsDtoAsync(
         Guid requestedId,
         TmdbItem item,
