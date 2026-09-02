@@ -89,7 +89,9 @@ public sealed partial class PremioController : ControllerBase
             PremioMetadataCache.TryGetItem(requestedGuid, out cachedItem);
         }
 
-        if (string.IsNullOrWhiteSpace(targetHash) && cachedItem is not null)
+        var isRealInfoHash = !string.IsNullOrWhiteSpace(targetHash) && targetHash.Length == 40 && !string.Equals(targetHash, requestedGuid.ToString("N"), StringComparison.OrdinalIgnoreCase);
+
+        if (!isRealInfoHash && cachedItem is not null)
         {
             var isTv = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             var imdbId = cachedItem.Id > 0
@@ -109,7 +111,7 @@ public sealed partial class PremioController : ControllerBase
             }
         }
 
-        if (string.IsNullOrWhiteSpace(targetHash))
+        if (string.IsNullOrWhiteSpace(targetHash) || targetHash.Length != 40)
         {
             return NotFound(new { message = "Stream or infoHash not found." });
         }

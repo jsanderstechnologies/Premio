@@ -603,13 +603,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         CancellationToken cancellationToken)
     {
         var mediaSourceId = ExtractMediaSourceId(context);
+        var requestedId = ExtractItemId(context);
+
         if (!string.IsNullOrWhiteSpace(mediaSourceId) && Guid.TryParse(mediaSourceId, out var parsedMediaGuid) && PremioMetadataCache.TryGetStreamHash(parsedMediaGuid, out var mappedHash))
         {
             mediaSourceId = mappedHash;
         }
 
-        // If mediaSourceId is not specified or placeholder, fetch best stream from Torrentio
-        if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
+        // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
+        var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
+
+        if (!isRealInfoHash)
         {
             var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             var imdbId = item.Id > 0
@@ -642,7 +646,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
         }
 
-        if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(mediaSourceId) || mediaSourceId.Length != 40)
         {
             return null;
         }
