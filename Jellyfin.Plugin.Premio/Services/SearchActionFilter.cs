@@ -32,16 +32,8 @@ namespace Jellyfin.Plugin.Premio.Services;
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
-    private static readonly Regex ItemImageRegex = new(
-        @"Items/([a-fA-F0-9\-]{32,36})/Images",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex ItemDetailsRegex = new(
-        @"(?:/Users/[a-fA-F0-9\-]{32,36})?/Items/([a-fA-F0-9\-]{32,36})(?:$|\?|/)",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-    private static readonly Regex PlaybackInfoRegex = new(
-        @"Items/([a-fA-F0-9\-]{32,36})/PlaybackInfo",
+    private static readonly Regex GuidExtractionRegex = new(
+        @"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}|[a-fA-F0-9]{32}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly TmdbClient _tmdbClient;
@@ -665,7 +657,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-        var guidMatches = Regex.Matches(requestPath, @"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}|[a-fA-F0-9]{32}");
+        var guidMatches = GuidExtractionRegex.Matches(requestPath);
         for (var i = guidMatches.Count - 1; i >= 0; i--)
         {
             if (Guid.TryParse(guidMatches[i].Value, out var matchedGuid) && matchedGuid != Guid.Empty)
