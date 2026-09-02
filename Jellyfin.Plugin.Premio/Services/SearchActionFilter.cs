@@ -134,11 +134,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // ---------------------------------------------------------------------
-        // 2. Intercept Virtual Item Details screen opening (GET /Items/{id} or /Users/{userId}/Items/{id})
+        // 2. Intercept Virtual Item Details & Batch item requests
         // ---------------------------------------------------------------------
         if (HttpMethods.IsGet(context.HttpContext.Request.Method) &&
             !requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase) &&
-            !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
+            !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase) &&
+            !requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
         {
             var requestedId = ExtractItemId(context);
             if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null && cachedItem.Id > 0)
@@ -146,7 +147,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 var detailsDto = await BuildItemDetailsDtoAsync(requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
                 if (detailsDto is not null)
                 {
-                    context.Result = new ObjectResult(detailsDto);
+                    if (context.HttpContext.Request.Query.ContainsKey("ids"))
+                    {
+                        context.Result = new ObjectResult(new QueryResult<BaseItemDto>(0, 1, new[] { detailsDto }));
+                    }
+                    else
+                    {
+                        context.Result = new ObjectResult(detailsDto);
+                    }
                     return;
                 }
             }
@@ -656,6 +664,25 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     private static Guid ExtractItemId(ActionExecutingContext context)
     {
+        if (context.HttpContext.Request.Query.TryGetValue("ids", out var qIds) && !string.IsNullOrWhiteSpace(qIds))
+        {
+            var firstId = qIds.ToString().Split(',')[0].Trim();
+            if (Guid.TryParse(firstId, out var parsedQ) && parsedQ != Guid.Empty)
+            {
+                return parsedQ;
+            }
+        }
+
+        if (context.HttpContext.Request.Query.TryGetValue("itemId", out var qItemId) && Guid.TryParse(qItemId, out var parsedQ2) && parsedQ2 != Guid.Empty)
+        {
+            return parsedQ2;
+        }
+
+        if (context.HttpContext.Request.Query.TryGetValue("id", out var qId) && Guid.TryParse(qId, out var parsedQ3) && parsedQ3 != Guid.Empty)
+        {
+            return parsedQ3;
+        }
+
         if (context.ActionArguments.TryGetValue("itemId", out var val) && val is not null)
         {
             if (val is Guid g && g != Guid.Empty)
