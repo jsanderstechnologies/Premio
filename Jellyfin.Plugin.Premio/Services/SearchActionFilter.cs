@@ -157,9 +157,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // ---------------------------------------------------------------------
         if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogInformation("Premio: Intercepted PlaybackInfo request: {Path}", requestPath);
+            LogInterceptedPlaybackInfo(_logger, requestPath);
             var requestedId = ExtractItemId(context);
-            _logger.LogInformation("Premio: Extracted ItemId: {ItemId}", requestedId);
+            LogExtractedItemId(_logger, requestedId);
 
             if (requestedId != Guid.Empty)
             {
@@ -181,7 +181,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
                 if (cachedItem is not null)
                 {
-                    _logger.LogInformation("Premio: Resolving item for playback: {Title}", cachedItem.DisplayTitle);
+                    LogResolvingItemForPlayback(_logger, cachedItem.DisplayTitle);
                     var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
                     if (playbackResult is not null)
                     {
@@ -933,9 +933,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return new Guid(hash.AsSpan(0, 16));
     }
 
-    // -------------------------------------------------------------------------
-    // LoggerMessage delegates (CA1848)
-    // -------------------------------------------------------------------------
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Intercepted PlaybackInfo request: {Path}")]
+    private static partial void LogInterceptedPlaybackInfo(ILogger logger, string path);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Extracted ItemId: {ItemId}")]
+    private static partial void LogExtractedItemId(ILogger logger, Guid itemId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Resolving item for playback: {Title}")]
+    private static partial void LogResolvingItemForPlayback(ILogger logger, string title);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Search interception failed for query '{SearchTerm}': {ErrorMessage}")]
     private static partial void LogSearchInterceptionFailed(ILogger logger, string searchTerm, string errorMessage);
