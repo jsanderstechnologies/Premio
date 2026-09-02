@@ -88,7 +88,9 @@ public sealed partial class TmdbClient
         int tmdbId,
         CancellationToken cancellationToken = default)
     {
-        var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+        var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+            ? "tv"
+            : (string.Equals(mediaType, "person", StringComparison.OrdinalIgnoreCase) ? "person" : "movie");
         var url = $"{endpoint}/{tmdbId}?api_key={ApiKey}&append_to_response=external_ids";
 
         try
@@ -147,12 +149,12 @@ public sealed partial class TmdbClient
     }
 
     /// <summary>
-    /// Downloads image bytes from a given TMDB image URI.
+    /// Downloads the raw image bytes from TMDB.
     /// </summary>
-    /// <param name="imageUri">Absolute image URI.</param>
+    /// <param name="imageUri">The full image URI.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Image bytes or null if download failed.</returns>
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Image download failures are non-critical.")]
+    /// <returns>Raw byte array or null if failed.</returns>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Image download failures should not disrupt caller flow.")]
     public async Task<byte[]?> DownloadImageBytesAsync(
         Uri imageUri,
         CancellationToken cancellationToken = default)
@@ -183,7 +185,7 @@ public sealed partial class TmdbClient
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: TMDB search failed for query '{Query}': {ErrorMessage}")]
     private static partial void LogTmdbSearchFailed(ILogger logger, string query, string errorMessage);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to fetch TMDB details for {MediaType} ID {TmdbId}: {ErrorMessage}")]
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Failed to fetch TMDB details for {MediaType} ID {TmdbId}: {ErrorMessage}")]
     private static partial void LogDetailsFetchFailed(ILogger logger, string mediaType, int tmdbId, string errorMessage);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to fetch external IDs for {MediaType} ID {TmdbId}: {ErrorMessage}")]
