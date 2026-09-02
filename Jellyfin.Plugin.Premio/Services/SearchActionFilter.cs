@@ -157,7 +157,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // ---------------------------------------------------------------------
         if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
         {
+            _logger.LogInformation("Premio: Intercepted PlaybackInfo request: {Path}", requestPath);
             var requestedId = ExtractItemId(context);
+            _logger.LogInformation("Premio: Extracted ItemId: {ItemId}", requestedId);
+
             if (requestedId != Guid.Empty)
             {
                 if (!PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) || cachedItem is null)
@@ -178,6 +181,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
                 if (cachedItem is not null)
                 {
+                    _logger.LogInformation("Premio: Resolving item for playback: {Title}", cachedItem.DisplayTitle);
                     var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
                     if (playbackResult is not null)
                     {
@@ -336,7 +340,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
             MediaSources = mediaSources.ToArray(),
-            LocationType = LocationType.Remote
+            LocationType = LocationType.FileSystem
         };
 
         return dto;
@@ -856,7 +860,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 ProductionYear = prodYear,
                 PrimaryImageAspectRatio = isPerson ? 1.0 : 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
-                LocationType = LocationType.Remote
+                LocationType = LocationType.FileSystem
             };
 
             existingItems.Add(dto);
