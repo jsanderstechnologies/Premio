@@ -13,6 +13,7 @@ using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Search;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.Logging;
@@ -99,19 +100,32 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
+            var query = context.HttpContext.Request.Query;
             var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-            var itemTypesParam = context.HttpContext.Request.Query["includeItemTypes"].ToString();
-            var allowedTypes = ParseAllowedTypes(itemTypesParam, requestPath);
+
+            var includeTypes = ParseQuerySet(query, "includeItemTypes");
+            var excludeTypes = ParseQuerySet(query, "excludeItemTypes");
+            var mediaTypes = ParseQuerySet(query, "mediaTypes");
+
+            if (requestPath.Contains("/Persons", StringComparison.OrdinalIgnoreCase))
+            {
+                includeTypes.Add("Person");
+            }
+
+            if (requestPath.Contains("/Artists", StringComparison.OrdinalIgnoreCase))
+            {
+                includeTypes.Add("MusicArtist");
+            }
 
             if (executedContext.Result is ObjectResult objectResult && objectResult.Value is not null)
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    objectResult.Value = EnrichSearchHints(hintResult, tmdbResults, allowedTypes);
+                    objectResult.Value = EnrichSearchHints(hintResult, tmdbResults, includeTypes, excludeTypes, mediaTypes);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    objectResult.Value = EnrichQueryResult(itemResult, tmdbResults, allowedTypes);
+                    objectResult.Value = EnrichQueryResult(itemResult, tmdbResults, includeTypes, excludeTypes, mediaTypes);
                 }
             }
         }
@@ -149,22 +163,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return Guid.Empty;
     }
 
-    private static HashSet<string>? ParseAllowedTypes(string? raw, string requestPath)
+    private static HashSet<string> ParseQuerySet(IQueryCollection query, string key)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (requestPath.Contains("/Persons", StringComparison.OrdinalIgnoreCase))
-        {
-            set.Add("Person");
-            return set;
-        }
-
-        if (requestPath.Contains("/Artists", StringComparison.OrdinalIgnoreCase))
-        {
-            set.Add("MusicArtist");
-            return set;
-        }
-
+        var raw = query[key].ToString();
         if (!string.IsNullOrWhiteSpace(raw))
         {
             foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -173,48 +175,91 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
         }
 
-        return set.Count > 0 ? set : null;
+        return set;
     }
 
-    private static bool MatchesFilter(TmdbItem item, HashSet<string>? allowedTypes)
+    private static bool MatchesFilter(
+        TmdbItem item,
+        HashSet<string> includeTypes,
+        HashSet<string> excludeTypes,
+        HashSet<string> mediaTypes)
     {
-        if (allowedTypes is not null)
+        var isMovie = string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase);
+        var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+        var isPerson = string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase);
+
+        var isMusicDept = isPerson && (
+            string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase));
+
+        // 1. Evaluate explicit excludeItemTypes
+        if (isMovie && excludeTypes.Contains("Movie"))
         {
-            // Pure Video / Folder queries must never match TMDB movies or shows
-            if (allowedTypes.Contains("Video") && !allowedTypes.Contains("Movie") && !allowedTypes.Contains("Series") && !allowedTypes.Contains("Episode"))
+            return false;
+        }
+
+        if (isTv && (excludeTypes.Contains("Series") || excludeTypes.Contains("Episode")))
+        {
+            return false;
+        }
+
+        if (isPerson)
+        {
+            if (isMusicDept && excludeTypes.Contains("MusicArtist"))
             {
                 return false;
             }
 
-            if (string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
+            if (!isMusicDept && excludeTypes.Contains("Person"))
             {
-                return allowedTypes.Contains("Movie");
+                return false;
+            }
+        }
+
+        // 2. Suppress generic video collection queries (Videos section)
+        if (includeTypes.Contains("Video") && !includeTypes.Contains("Movie") && !includeTypes.Contains("Series"))
+        {
+            return false;
+        }
+
+        // 3. Evaluate includeItemTypes
+        if (includeTypes.Count > 0)
+        {
+            if (isMovie)
+            {
+                return includeTypes.Contains("Movie");
             }
 
-            if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+            if (isTv)
             {
-                return allowedTypes.Contains("Series") || allowedTypes.Contains("Episode");
+                return includeTypes.Contains("Series") || includeTypes.Contains("Episode");
             }
 
-            if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            if (isPerson)
             {
-                var isMusic = string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
-                              string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
-
-                if (allowedTypes.Contains("MusicArtist") && !allowedTypes.Contains("Person"))
+                if (includeTypes.Contains("MusicArtist") && !includeTypes.Contains("Person"))
                 {
-                    return isMusic;
+                    return isMusicDept;
                 }
 
-                if (allowedTypes.Contains("Person") && !allowedTypes.Contains("MusicArtist"))
+                if (includeTypes.Contains("Person") && !includeTypes.Contains("MusicArtist"))
                 {
-                    return !isMusic;
+                    return !isMusicDept;
                 }
 
-                return allowedTypes.Contains("Person") || allowedTypes.Contains("MusicArtist");
+                return includeTypes.Contains("Person") || includeTypes.Contains("MusicArtist");
             }
 
             return false;
+        }
+
+        // 4. Evaluate mediaTypes (e.g. Audio requests)
+        if (mediaTypes.Count > 0)
+        {
+            if (mediaTypes.Contains("Audio") && !mediaTypes.Contains("Video"))
+            {
+                return isMusicDept;
+            }
         }
 
         return true;
@@ -223,13 +268,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private static SearchHintResult EnrichSearchHints(
         SearchHintResult hintResult,
         IReadOnlyList<TmdbItem> tmdbItems,
-        HashSet<string>? allowedTypes)
+        HashSet<string> includeTypes,
+        HashSet<string> excludeTypes,
+        HashSet<string> mediaTypes)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
 
         foreach (var tmdbItem in tmdbItems)
         {
-            if (!MatchesFilter(tmdbItem, allowedTypes))
+            if (!MatchesFilter(tmdbItem, includeTypes, excludeTypes, mediaTypes))
             {
                 continue;
             }
@@ -237,7 +284,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, includeTypes);
 
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
@@ -266,14 +313,16 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private QueryResult<BaseItemDto> EnrichQueryResult(
         QueryResult<BaseItemDto> queryResult,
         IReadOnlyList<TmdbItem> tmdbItems,
-        HashSet<string>? allowedTypes)
+        HashSet<string> includeTypes,
+        HashSet<string> excludeTypes,
+        HashSet<string> mediaTypes)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
         var serverId = _appHost.SystemId;
 
         foreach (var tmdbItem in tmdbItems)
         {
-            if (!MatchesFilter(tmdbItem, allowedTypes))
+            if (!MatchesFilter(tmdbItem, includeTypes, excludeTypes, mediaTypes))
             {
                 continue;
             }
@@ -281,7 +330,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, includeTypes);
 
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
@@ -312,7 +361,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     private static (BaseItemKind Kind, MediaType MediaType, bool IsFolder, bool IsPerson) ResolveMediaTypes(
         TmdbItem item,
-        HashSet<string>? allowedTypes)
+        HashSet<string> includeTypes)
     {
         if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
         {
@@ -321,7 +370,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
         {
-            var isMusic = (allowedTypes is not null && allowedTypes.Contains("MusicArtist") && !allowedTypes.Contains("Person")) ||
+            var isMusic = (includeTypes.Contains("MusicArtist") && !includeTypes.Contains("Person")) ||
                           string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
                           string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
 
