@@ -88,19 +88,20 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
         {
             var requestedId = ExtractItemId(context);
-            if (requestedId != Guid.Empty)
-            {
-                var isBackdrop = requestPath.Contains("/Backdrop", StringComparison.OrdinalIgnoreCase);
+            var tag = context.HttpContext.Request.Query["tag"].ToString();
+            var isBackdrop = requestPath.Contains("/Backdrop", StringComparison.OrdinalIgnoreCase) || tag.Contains("_bg_", StringComparison.OrdinalIgnoreCase);
 
+            if (requestedId != Guid.Empty || !string.IsNullOrWhiteSpace(tag))
+            {
                 if (isBackdrop)
                 {
-                    if (PremioMetadataCache.TryGetBackdropBytes(requestedId, out var cachedBg) && cachedBg is not null)
+                    if (requestedId != Guid.Empty && PremioMetadataCache.TryGetBackdropBytes(requestedId, out var cachedBg) && cachedBg is not null)
                     {
                         context.Result = new FileContentResult(cachedBg, "image/jpeg");
                         return;
                     }
 
-                    if (PremioMetadataCache.TryGetBackdropUri(requestedId, out var bgUri) && bgUri is not null)
+                    if (requestedId != Guid.Empty && PremioMetadataCache.TryGetBackdropUri(requestedId, out var bgUri) && bgUri is not null)
                     {
                         var downloadedBg = await _tmdbClient.DownloadImageBytesAsync(bgUri, cancellationToken).ConfigureAwait(false);
                         if (downloadedBg is not null && downloadedBg.Length > 0)
@@ -110,16 +111,39 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                             return;
                         }
                     }
+
+                    if (!string.IsNullOrWhiteSpace(tag) && tag.StartsWith("premio_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var tmdbIdStr = tag.Replace("premio_bg_", "", StringComparison.OrdinalIgnoreCase).Replace("premio_", "", StringComparison.OrdinalIgnoreCase);
+                        if (int.TryParse(tmdbIdStr, out var tmdbId))
+                        {
+                            var details = await _tmdbClient.GetDetailsAsync("movie", tmdbId, cancellationToken).ConfigureAwait(false)
+                                          ?? await _tmdbClient.GetDetailsAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                            if (details?.BackdropUrl is not null)
+                            {
+                                var downloaded = await _tmdbClient.DownloadImageBytesAsync(details.BackdropUrl, cancellationToken).ConfigureAwait(false);
+                                if (downloaded is not null && downloaded.Length > 0)
+                                {
+                                    if (requestedId != Guid.Empty)
+                                    {
+                                        PremioMetadataCache.SetBackdropBytes(requestedId, downloaded);
+                                    }
+                                    context.Result = new FileContentResult(downloaded, "image/jpeg");
+                                    return;
+                                }
+                            }
+                        }
+                    }
                 }
                 else
                 {
-                    if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
+                    if (requestedId != Guid.Empty && PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
                     {
                         context.Result = new FileContentResult(cachedBytes, "image/jpeg");
                         return;
                     }
 
-                    if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+                    if (requestedId != Guid.Empty && PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
                     {
                         var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
                         if (downloadedBytes is not null && downloadedBytes.Length > 0)
@@ -127,6 +151,29 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                             PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
                             context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
                             return;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(tag) && tag.StartsWith("premio_", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var tmdbIdStr = tag.Replace("premio_bg_", "", StringComparison.OrdinalIgnoreCase).Replace("premio_", "", StringComparison.OrdinalIgnoreCase);
+                        if (int.TryParse(tmdbIdStr, out var tmdbId))
+                        {
+                            var details = await _tmdbClient.GetDetailsAsync("movie", tmdbId, cancellationToken).ConfigureAwait(false)
+                                          ?? await _tmdbClient.GetDetailsAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                            if (details?.PosterUrl is not null)
+                            {
+                                var downloaded = await _tmdbClient.DownloadImageBytesAsync(details.PosterUrl, cancellationToken).ConfigureAwait(false);
+                                if (downloaded is not null && downloaded.Length > 0)
+                                {
+                                    if (requestedId != Guid.Empty)
+                                    {
+                                        PremioMetadataCache.SetImageBytes(requestedId, downloaded);
+                                    }
+                                    context.Result = new FileContentResult(downloaded, "image/jpeg");
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
@@ -297,6 +344,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // 3. Populate MediaSources (Version dropdown)
+        var defaultStreams = new[]
+        {
+            new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
+            new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
+        };
+
         var mediaSources = new List<MediaSourceInfo>
         {
             new MediaSourceInfo
@@ -311,7 +364,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 IsRemote = true,
                 SupportsDirectPlay = true,
                 SupportsDirectStream = true,
-                SupportsTranscoding = true
+                SupportsTranscoding = true,
+                MediaStreams = defaultStreams.ToList()
             }
         };
 
@@ -333,7 +387,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 IsRemote = true,
                 SupportsDirectPlay = true,
                 SupportsDirectStream = true,
-                SupportsTranscoding = true
+                SupportsTranscoding = true,
+                MediaStreams = defaultStreams.ToList()
             });
         }
 
@@ -366,7 +421,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
             MediaSources = mediaSources.ToArray(),
-            LocationType = LocationType.FileSystem
+            LocationType = LocationType.FileSystem,
+            MediaStreams = defaultStreams.ToList(),
+            People = Array.Empty<BaseItemPerson>(),
+            Chapters = Array.Empty<ChapterInfoDto>(),
+            RemoteTrailers = Array.Empty<MediaUrl>(),
+            ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } }
         };
 
         return dto;
