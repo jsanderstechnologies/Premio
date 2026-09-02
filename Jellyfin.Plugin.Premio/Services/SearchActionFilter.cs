@@ -21,7 +21,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints and /Items with searchTerm) to return strictly categorized TMDB results (Movies, Shows, People, Artists)
+/// (/Search/Hints, /Items, /Persons, /Artists with searchTerm) to return strictly categorized TMDB results (Movies, Shows, People, Artists)
 /// and dynamically serves TMDB poster and profile images.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
@@ -180,7 +180,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     {
         if (allowedTypes is not null)
         {
-            if (allowedTypes.Contains("Video") || allowedTypes.Contains("Folder") || allowedTypes.Contains("Photo") || allowedTypes.Contains("Audio"))
+            // Pure Video / Folder queries must never match TMDB movies or shows
+            if (allowedTypes.Contains("Video") && !allowedTypes.Contains("Movie") && !allowedTypes.Contains("Series") && !allowedTypes.Contains("Episode"))
             {
                 return false;
             }
@@ -200,17 +201,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 var isMusic = string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
                               string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
 
-                if (allowedTypes.Contains("MusicArtist"))
+                if (allowedTypes.Contains("MusicArtist") && !allowedTypes.Contains("Person"))
                 {
                     return isMusic;
                 }
 
-                if (allowedTypes.Contains("Person"))
+                if (allowedTypes.Contains("Person") && !allowedTypes.Contains("MusicArtist"))
                 {
                     return !isMusic;
                 }
 
-                return false;
+                return allowedTypes.Contains("Person") || allowedTypes.Contains("MusicArtist");
             }
 
             return false;
@@ -236,7 +237,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var (kind, mediaType, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
 
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
@@ -250,6 +251,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Name = displayName,
                 Type = kind,
                 MediaType = mediaType,
+                IsFolder = isFolder,
                 PrimaryImageTag = "premio_" + tmdbItem.Id,
                 PrimaryImageAspectRatio = isPerson ? 1.0 : 2.0 / 3.0,
                 ProductionYear = prodYear
@@ -279,7 +281,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var (kind, mediaType, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
+            var (kind, mediaType, isFolder, isPerson) = ResolveMediaTypes(tmdbItem, allowedTypes);
 
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
@@ -294,12 +296,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Name = displayName,
                 Type = kind,
                 MediaType = mediaType,
+                IsFolder = isFolder,
                 Overview = tmdbItem.Overview,
                 ProductionYear = prodYear,
                 PrimaryImageAspectRatio = isPerson ? 1.0 : 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
-                LocationType = LocationType.Remote,
-                IsFolder = false
+                LocationType = LocationType.Remote
             };
 
             existingItems.Add(dto);
@@ -308,25 +310,25 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
     }
 
-    private static (BaseItemKind Kind, MediaType MediaType, bool IsPerson) ResolveMediaTypes(
+    private static (BaseItemKind Kind, MediaType MediaType, bool IsFolder, bool IsPerson) ResolveMediaTypes(
         TmdbItem item,
         HashSet<string>? allowedTypes)
     {
         if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
         {
-            return (BaseItemKind.Series, MediaType.Video, false);
+            return (BaseItemKind.Series, MediaType.Video, true, false);
         }
 
         if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
         {
-            var isMusic = (allowedTypes is not null && allowedTypes.Contains("MusicArtist")) ||
+            var isMusic = (allowedTypes is not null && allowedTypes.Contains("MusicArtist") && !allowedTypes.Contains("Person")) ||
                           string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
                           string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
 
-            return (isMusic ? BaseItemKind.MusicArtist : BaseItemKind.Person, MediaType.Unknown, true);
+            return (isMusic ? BaseItemKind.MusicArtist : BaseItemKind.Person, MediaType.Unknown, isMusic, true);
         }
 
-        return (BaseItemKind.Movie, MediaType.Video, false);
+        return (BaseItemKind.Movie, MediaType.Video, false, false);
     }
 
     private static Guid GenerateDeterministicGuid(string id)
