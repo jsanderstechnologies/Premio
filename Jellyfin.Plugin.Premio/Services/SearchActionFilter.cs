@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -22,42 +21,30 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints and /Items with searchTerm) to inject TMDB results and serves TMDB poster images for virtual items.
+/// (/Search/Hints and /Items with searchTerm) to return clean TMDB results and dynamically serve TMDB poster images.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
-    private static readonly Regex TvPattern = new(
-        @"[sS]\d{1,2}[eE]\d{1,2}|[sS]eason\s*\d+|[eE]pisode\s*\d+",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     private static readonly Regex ItemImageRegex = new(
         @"Items/([a-fA-F0-9\-]{36})/Images",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private readonly PremiumizeClient _client;
     private readonly TmdbClient _tmdbClient;
-    private readonly StrmFileService _strmService;
     private readonly IServerApplicationHost _appHost;
     private readonly ILogger<SearchActionFilter> _logger;
 
     /// <summary>
     /// Initialises a new instance of <see cref="SearchActionFilter"/>.
     /// </summary>
-    /// <param name="client">Injected Premiumize REST API client.</param>
     /// <param name="tmdbClient">Injected TMDB client.</param>
-    /// <param name="strmService">Injected STRM file service.</param>
     /// <param name="appHost">Injected Jellyfin server host.</param>
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
-        PremiumizeClient client,
         TmdbClient tmdbClient,
-        StrmFileService strmService,
         IServerApplicationHost appHost,
         ILogger<SearchActionFilter> logger)
     {
-        _client = client;
         _tmdbClient = tmdbClient;
-        _strmService = strmService;
         _appHost = appHost;
         _logger = logger;
     }
@@ -69,7 +56,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
 
-        // 1. Intercept Image requests for virtual TMDB / Premio items
+        // 1. Intercept Image requests for virtual TMDB items
         var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
         if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
         {
@@ -108,11 +95,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         {
             var cancellationToken = context.HttpContext.RequestAborted;
 
-            // Search TMDB and Premiumize
+            // Search TMDB exclusively
             var tmdbResults = await _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken).ConfigureAwait(false);
-            var searchResults = await _client.SearchAsync(searchTerm, cancellationToken).ConfigureAwait(false);
-
-            if (tmdbResults.Count == 0 && searchResults.Count == 0)
+            if (tmdbResults.Count == 0)
             {
                 return;
             }
@@ -121,11 +106,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, tmdbResults, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = EnrichSearchHints(hintResult, tmdbResults);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    objectResult.Value = await EnrichQueryResultAsync(itemResult, tmdbResults, searchResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = EnrichQueryResult(itemResult, tmdbResults);
                 }
             }
         }
@@ -135,16 +120,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
-    private Task<SearchHintResult> EnrichSearchHintsAsync(
+    private static SearchHintResult EnrichSearchHints(
         SearchHintResult hintResult,
-        IReadOnlyList<TmdbItem> tmdbItems,
-        IReadOnlyList<PremiumizeSearchItem> premiumizeItems,
-        CancellationToken cancellationToken)
+        IReadOnlyList<TmdbItem> tmdbItems)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
 
-        // 1. Add TMDB search results with poster tags
         foreach (var tmdbItem in tmdbItems)
         {
             if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
@@ -156,7 +137,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
+            var displayName = !string.IsNullOrWhiteSpace(tmdbItem.Year)
+                ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
+                : tmdbItem.DisplayTitle;
+
             var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var hint = new SearchHint
@@ -173,83 +157,16 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             existingHints.Add(hint);
         }
 
-        // 2. Add any direct Premiumize cloud items
-        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
-        foreach (var item in premiumizeItems)
-        {
-            if (string.Equals(item.Type, "folder", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var isTv = TvPattern.IsMatch(item.Name);
-            var itemGuid = GenerateDeterministicGuid(item.Id);
-
-            var matchedTmdb = tmdbItems.FirstOrDefault(t =>
-                item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
-
-            var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
-                ? $"[Premio Cloud] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
-                : $"[Premio Cloud] {item.Name}";
-
-            var hint = new SearchHint
-            {
-                Id = itemGuid,
-                Name = displayName,
-                Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
-                MediaType = MediaType.Video,
-                PrimaryImageTag = matchedTmdb is not null ? "premio_" + matchedTmdb.Id : null,
-                PrimaryImageAspectRatio = 2.0 / 3.0
-            };
-
-            if (matchedTmdb is not null)
-            {
-                PremioMetadataCache.Register(itemGuid, matchedTmdb);
-            }
-
-            existingHints.Add(hint);
-
-            // Write corresponding .strm file and download TMDB poster in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var streamUrl = await _client.GetStreamUrlAsync(item.Id, cancellationToken).ConfigureAwait(false);
-                    if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
-                    {
-                        var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
-
-                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null)
-                        {
-                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(matchedTmdb.PosterUrl, cancellationToken).ConfigureAwait(false);
-                            if (posterBytes is not null && posterBytes.Length > 0)
-                            {
-                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogStreamResolutionFailed(_logger, item.Id, ex.Message);
-                }
-            }, cancellationToken);
-        }
-
-        return Task.FromResult(new SearchHintResult(existingHints.ToArray(), existingHints.Count));
+        return new SearchHintResult(existingHints.ToArray(), existingHints.Count);
     }
 
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
-    private Task<QueryResult<BaseItemDto>> EnrichQueryResultAsync(
+    private QueryResult<BaseItemDto> EnrichQueryResult(
         QueryResult<BaseItemDto> queryResult,
-        IReadOnlyList<TmdbItem> tmdbItems,
-        IReadOnlyList<PremiumizeSearchItem> premiumizeItems,
-        CancellationToken cancellationToken)
+        IReadOnlyList<TmdbItem> tmdbItems)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
         var serverId = _appHost.SystemId;
 
-        // 1. Add TMDB items
         foreach (var tmdbItem in tmdbItems)
         {
             if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
@@ -261,7 +178,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
-            var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
+            var displayName = !string.IsNullOrWhiteSpace(tmdbItem.Year)
+                ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
+                : tmdbItem.DisplayTitle;
+
             var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var dto = new BaseItemDto
@@ -282,74 +202,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             existingItems.Add(dto);
         }
 
-        // 2. Add direct Premiumize items
-        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
-        foreach (var item in premiumizeItems)
-        {
-            if (string.Equals(item.Type, "folder", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var isTv = TvPattern.IsMatch(item.Name);
-            var itemGuid = GenerateDeterministicGuid(item.Id);
-
-            var matchedTmdb = tmdbItems.FirstOrDefault(t =>
-                item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
-
-            var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
-                ? $"[Premio Cloud] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
-                : $"[Premio Cloud] {item.Name}";
-
-            var dto = new BaseItemDto
-            {
-                Id = itemGuid,
-                ServerId = serverId,
-                Name = displayName,
-                Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
-                MediaType = MediaType.Video,
-                Overview = matchedTmdb?.Overview,
-                PrimaryImageAspectRatio = 2.0 / 3.0,
-                ImageTags = matchedTmdb is not null ? new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + matchedTmdb.Id } } : null,
-                LocationType = LocationType.Remote,
-                IsFolder = false
-            };
-
-            if (matchedTmdb is not null)
-            {
-                PremioMetadataCache.Register(itemGuid, matchedTmdb);
-            }
-
-            existingItems.Add(dto);
-
-            // Write corresponding .strm file and download TMDB poster in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var streamUrl = await _client.GetStreamUrlAsync(item.Id, cancellationToken).ConfigureAwait(false);
-                    if (Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri))
-                    {
-                        var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
-
-                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null)
-                        {
-                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(matchedTmdb.PosterUrl, cancellationToken).ConfigureAwait(false);
-                            if (posterBytes is not null && posterBytes.Length > 0)
-                            {
-                                await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogStreamResolutionFailed(_logger, item.Id, ex.Message);
-                }
-            }, cancellationToken);
-        }
-
-        return Task.FromResult(new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems));
+        return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
     }
 
     private static Guid GenerateDeterministicGuid(string id)
@@ -365,7 +218,4 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Search interception failed for query '{SearchTerm}': {ErrorMessage}")]
     private static partial void LogSearchInterceptionFailed(ILogger logger, string searchTerm, string errorMessage);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to resolve stream for item ID '{ItemId}': {ErrorMessage}")]
-    private static partial void LogStreamResolutionFailed(ILogger logger, string itemId, string errorMessage);
 }
