@@ -142,12 +142,17 @@ public sealed partial class PremiumizeClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(magnetOrHash);
 
-        var url = WithKey("directdl/create");
+        var src = magnetOrHash.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ||
+                  magnetOrHash.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? magnetOrHash
+            : $"magnet:?xt=urn:btih:{magnetOrHash}";
+
+        var url = WithKey("transfer/directdl");
         LogCreatingDirectDl(_logger);
 
         using var formContent = new FormUrlEncodedContent(
         [
-            new KeyValuePair<string, string>("src", magnetOrHash)
+            new KeyValuePair<string, string>("src", src)
         ]);
 
         var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
@@ -161,7 +166,7 @@ public sealed partial class PremiumizeClient
         if (result is null || !string.Equals(result.Status, "success", StringComparison.OrdinalIgnoreCase))
         {
             throw new PremiumizeApiException(
-                "directdl/create",
+                "transfer/directdl",
                 result?.Message ?? "Direct download resolution failed.");
         }
 
@@ -185,10 +190,15 @@ public sealed partial class PremiumizeClient
 
         try
         {
+            var src = magnetOrHash.StartsWith("magnet:", StringComparison.OrdinalIgnoreCase) ||
+                      magnetOrHash.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? magnetOrHash
+                : $"magnet:?xt=urn:btih:{magnetOrHash}";
+
             var url = WithKey("transfer/create");
             using var formContent = new FormUrlEncodedContent(
             [
-                new KeyValuePair<string, string>("src", magnetOrHash)
+                new KeyValuePair<string, string>("src", src)
             ]);
 
             var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
