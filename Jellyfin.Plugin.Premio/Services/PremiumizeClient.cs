@@ -152,7 +152,8 @@ public sealed partial class PremiumizeClient
 
         using var formContent = new FormUrlEncodedContent(
         [
-            new KeyValuePair<string, string>("src", src)
+            new KeyValuePair<string, string>("src", src),
+            new KeyValuePair<string, string>("apikey", ApiKey)
         ]);
 
         var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
@@ -198,7 +199,8 @@ public sealed partial class PremiumizeClient
             var url = WithKey("transfer/create");
             using var formContent = new FormUrlEncodedContent(
             [
-                new KeyValuePair<string, string>("src", src)
+                new KeyValuePair<string, string>("src", src),
+                new KeyValuePair<string, string>("apikey", ApiKey)
             ]);
 
             LogSendingTransfer(_logger, src);
