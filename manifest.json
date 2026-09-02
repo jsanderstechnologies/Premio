@@ -9,12 +9,12 @@
     "imageUrl": "https://raw.githubusercontent.com/jsanderstechnologies/Premio/master/assets/premio-logo.png",
     "versions": [
       {
-        "version": "1.1.0.7",
-        "changelog": "See https://github.com/jsanderstechnologies/Premio/releases/tag/v1.1.0.7",
+        "version": "1.1.0.8",
+        "changelog": "See https://github.com/jsanderstechnologies/Premio/releases/tag/v1.1.0.8",
         "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/jsanderstechnologies/Premio/releases/download/v1.1.0.7/Jellyfin.Plugin.Premio_1.1.0.7.zip",
-        "checksum": "5665568a5b7fe72ab1962e530d02315a",
-        "timestamp": "2026-09-02T13:46:22Z"
+        "sourceUrl": "https://github.com/jsanderstechnologies/Premio/releases/download/v1.1.0.8/Jellyfin.Plugin.Premio_1.1.0.8.zip",
+        "checksum": "48bb324835ccff189b0607fadc1a734d",
+        "timestamp": "2026-09-02T14:05:15Z"
       }
     ]
   }
