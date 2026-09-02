@@ -499,15 +499,29 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return null;
             }
 
-            LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
-
             // 2. Write corresponding .strm file and save poster to Jellyfin Library
             var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
-            var formattedTitle = !string.IsNullOrWhiteSpace(item.Year)
-                ? $"{item.DisplayTitle} ({item.Year})"
-                : item.DisplayTitle;
+            var season = 1;
+            var episode = 1;
 
-            var strmPath = await _strmService.WriteMediaStrmFileAsync(formattedTitle, new Uri(streamUrl), isTv, cancellationToken).ConfigureAwait(false);
+            if (context.HttpContext.Request.Query.TryGetValue("SeasonNumber", out var sStr) && int.TryParse(sStr, out var sVal))
+            {
+                season = sVal;
+            }
+
+            if (context.HttpContext.Request.Query.TryGetValue("EpisodeNumber", out var eStr) && int.TryParse(eStr, out var eVal))
+            {
+                episode = eVal;
+            }
+
+            var strmPath = await _strmService.WriteMediaStrmFileAsync(
+                item.DisplayTitle,
+                item.Year,
+                new Uri(streamUrl),
+                isTv,
+                season,
+                episode,
+                cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
             {
                 var posterBytes = await _tmdbClient.DownloadImageBytesAsync(item.PosterUrl, cancellationToken).ConfigureAwait(false);

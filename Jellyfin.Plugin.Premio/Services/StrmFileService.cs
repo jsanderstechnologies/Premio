@@ -58,17 +58,25 @@ public sealed partial class StrmFileService
 
     /// <summary>
     /// Writes a <c>.strm</c> file into the appropriate Movie or TV Show directory based on media type.
+    /// Movies: [MoviesDir]/[MovieTitle].[Year]/[MovieTitle].[Year].strm
+    /// TV Shows: [TvDir]/[ShowTitle].[Year]/Season [SeasonNumber]/[ShowTitle].S##E##.strm
     /// </summary>
-    /// <param name="title">Item title or filename.</param>
+    /// <param name="title">Item title.</param>
+    /// <param name="year">Release year (e.g. "1987" or "2008").</param>
     /// <param name="streamUri">Direct stream URI.</param>
     /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
+    /// <param name="seasonNumber">Season number (default 1 for TV shows).</param>
+    /// <param name="episodeNumber">Episode number (default 1 for TV shows).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
     [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
     public async Task<string?> WriteMediaStrmFileAsync(
         string title,
+        string? year,
         Uri streamUri,
         bool isTvShow = false,
+        int seasonNumber = 1,
+        int episodeNumber = 1,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -83,8 +91,28 @@ public sealed partial class StrmFileService
             return null;
         }
 
-        var safeTitle = SanitizeFileName(title);
-        var absolutePath = Path.Combine(targetDir, safeTitle + ".strm");
+        var cleanTitle = SanitizeFileName(title);
+        var cleanYear = !string.IsNullOrWhiteSpace(year) ? SanitizeFileName(year) : null;
+        var folderWithYear = cleanYear is not null ? $"{cleanTitle}.{cleanYear}" : cleanTitle;
+
+        string directoryPath;
+        string fileName;
+
+        if (isTvShow)
+        {
+            var seasonFolder = $"Season {seasonNumber}";
+            var sNum = seasonNumber < 1 ? 1 : seasonNumber;
+            var eNum = episodeNumber < 1 ? 1 : episodeNumber;
+            fileName = $"{cleanTitle}.S{sNum:D2}E{eNum:D2}.strm";
+            directoryPath = Path.Combine(targetDir, folderWithYear, seasonFolder);
+        }
+        else
+        {
+            fileName = $"{folderWithYear}.strm";
+            directoryPath = Path.Combine(targetDir, folderWithYear);
+        }
+
+        var absolutePath = Path.Combine(directoryPath, fileName);
 
         if (File.Exists(absolutePath) && !Config.OverwriteExistingStrmFiles)
         {
@@ -92,10 +120,9 @@ public sealed partial class StrmFileService
             return absolutePath;
         }
 
-        var directory = Path.GetDirectoryName(absolutePath);
-        if (!string.IsNullOrEmpty(directory))
+        if (!Directory.Exists(directoryPath))
         {
-            Directory.CreateDirectory(directory);
+            Directory.CreateDirectory(directoryPath);
         }
 
         await File.WriteAllTextAsync(absolutePath, streamUri.AbsoluteUri, cancellationToken)
@@ -106,7 +133,24 @@ public sealed partial class StrmFileService
     }
 
     /// <summary>
-    /// Saves a poster image alongside an existing .strm file.
+    /// Writes a <c>.strm</c> file into the appropriate Movie or TV Show directory based on media type.
+    /// </summary>
+    /// <param name="title">Item title or formatted filename.</param>
+    /// <param name="streamUri">Direct stream URI.</param>
+    /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
+    public Task<string?> WriteMediaStrmFileAsync(
+        string title,
+        Uri streamUri,
+        bool isTvShow = false,
+        CancellationToken cancellationToken = default)
+    {
+        return WriteMediaStrmFileAsync(title, null, streamUri, isTvShow, 1, 1, cancellationToken);
+    }
+
+    /// <summary>
+    /// Saves a poster image alongside an existing .strm file or in the show root folder.
     /// </summary>
     /// <param name="strmPath">The absolute path to the generated .strm file.</param>
     /// <param name="posterBytes">Raw image bytes to save.</param>
@@ -127,13 +171,23 @@ public sealed partial class StrmFileService
         }
 
         var directory = Path.GetDirectoryName(strmPath);
-        var baseName = Path.GetFileNameWithoutExtension(strmPath);
-        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(baseName))
+        if (string.IsNullOrEmpty(directory))
         {
             return null;
         }
 
-        var posterPath = Path.Combine(directory, $"{baseName}-poster.jpg");
+        // If inside a Season folder (e.g. TV/Show.2008/Season 1), save poster to the show root folder
+        var targetFolder = directory;
+        if (Path.GetFileName(directory).StartsWith("Season ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parent = Directory.GetParent(directory);
+            if (parent is not null)
+            {
+                targetFolder = parent.FullName;
+            }
+        }
+
+        var posterPath = Path.Combine(targetFolder, "poster.jpg");
 
         if (File.Exists(posterPath) && !Config.OverwriteExistingStrmFiles)
         {
