@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Search;
 using Microsoft.AspNetCore.Mvc;
@@ -20,12 +21,16 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search requests
-/// (/Search/Hints and /Items with searchTerm) and enriches results with Premiumize cloud items and TMDB posters.
+/// (/Search/Hints and /Items with searchTerm) to inject TMDB results and serves TMDB poster images for virtual items.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
 {
     private static readonly Regex TvPattern = new(
         @"[sS]\d{1,2}[eE]\d{1,2}|[sS]eason\s*\d+|[eE]pisode\s*\d+",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ItemImageRegex = new(
+        @"Items/([a-fA-F0-9\-]{36})/Images",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly PremiumizeClient _client;
@@ -59,14 +64,35 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
 
-        var executedContext = await next().ConfigureAwait(false);
-
-        var config = PremioPlugin.Instance?.Configuration;
-        if (string.IsNullOrWhiteSpace(config?.ApiKey))
+        // 1. Intercept Image requests for virtual TMDB / Premio items
+        var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
+        if (requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase))
         {
-            return;
+            var match = ItemImageRegex.Match(requestPath);
+            if (match.Success && Guid.TryParse(match.Groups[1].Value, out var requestedId))
+            {
+                if (PremioMetadataCache.TryGetImageBytes(requestedId, out var cachedBytes) && cachedBytes is not null)
+                {
+                    context.Result = new FileContentResult(cachedBytes, "image/jpeg");
+                    return;
+                }
+
+                if (PremioMetadataCache.TryGetPosterUri(requestedId, out var posterUri) && posterUri is not null)
+                {
+                    var downloadedBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, context.HttpContext.RequestAborted).ConfigureAwait(false);
+                    if (downloadedBytes is not null && downloadedBytes.Length > 0)
+                    {
+                        PremioMetadataCache.SetImageBytes(requestedId, downloadedBytes);
+                        context.Result = new FileContentResult(downloadedBytes, "image/jpeg");
+                        return;
+                    }
+                }
+            }
         }
 
+        var executedContext = await next().ConfigureAwait(false);
+
+        // 2. Intercept Search requests
         var searchTerm = context.HttpContext.Request.Query["searchTerm"].ToString();
         if (string.IsNullOrWhiteSpace(searchTerm))
         {
@@ -77,11 +103,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         {
             var cancellationToken = context.HttpContext.RequestAborted;
 
-            // Search Premiumize and TMDB
-            var searchResults = await _client.SearchAsync(searchTerm, cancellationToken).ConfigureAwait(false);
+            // Search TMDB and Premiumize
             var tmdbResults = await _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken).ConfigureAwait(false);
+            var searchResults = await _client.SearchAsync(searchTerm, cancellationToken).ConfigureAwait(false);
 
-            if (searchResults.Count == 0 && tmdbResults.Count == 0)
+            if (tmdbResults.Count == 0 && searchResults.Count == 0)
             {
                 return;
             }
@@ -90,11 +116,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 if (objectResult.Value is SearchHintResult hintResult)
                 {
-                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, searchResults, tmdbResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichSearchHintsAsync(hintResult, tmdbResults, searchResults, cancellationToken).ConfigureAwait(false);
                 }
                 else if (objectResult.Value is QueryResult<BaseItemDto> itemResult)
                 {
-                    objectResult.Value = await EnrichQueryResultAsync(itemResult, searchResults, tmdbResults, cancellationToken).ConfigureAwait(false);
+                    objectResult.Value = await EnrichQueryResultAsync(itemResult, tmdbResults, searchResults, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -107,14 +133,45 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
     private Task<SearchHintResult> EnrichSearchHintsAsync(
         SearchHintResult hintResult,
-        IReadOnlyList<PremiumizeSearchItem> items,
         IReadOnlyList<TmdbItem> tmdbItems,
+        IReadOnlyList<PremiumizeSearchItem> premiumizeItems,
         CancellationToken cancellationToken)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
-        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
 
-        foreach (var item in items)
+        // 1. Add TMDB search results with poster tags
+        foreach (var tmdbItem in tmdbItems)
+        {
+            if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var isTv = string.Equals(tmdbItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
+            PremioMetadataCache.Register(itemGuid, tmdbItem);
+
+            var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
+            int.TryParse(tmdbItem.Year, out var prodYear);
+
+            var hint = new SearchHint
+            {
+                Id = itemGuid,
+                ItemId = itemGuid,
+                Name = displayName,
+                Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
+                MediaType = MediaType.Video,
+                PrimaryImageTag = "premio_" + tmdbItem.Id,
+                PrimaryImageAspectRatio = 2.0 / 3.0,
+                ProductionYear = prodYear > 0 ? prodYear : null
+            };
+
+            existingHints.Add(hint);
+        }
+
+        // 2. Add any direct Premiumize cloud items
+        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
+        foreach (var item in premiumizeItems)
         {
             if (string.Equals(item.Type, "folder", StringComparison.OrdinalIgnoreCase))
             {
@@ -124,21 +181,28 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var isTv = TvPattern.IsMatch(item.Name);
             var itemGuid = GenerateDeterministicGuid(item.Id);
 
-            // Match best TMDB item if available
             var matchedTmdb = tmdbItems.FirstOrDefault(t =>
                 item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
 
             var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
-                ? $"[Premio] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
-                : $"[Premio] {item.Name}";
+                ? $"[Premio Cloud] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
+                : $"[Premio Cloud] {item.Name}";
 
             var hint = new SearchHint
             {
                 Id = itemGuid,
+                ItemId = itemGuid,
                 Name = displayName,
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
-                MediaType = MediaType.Video
+                MediaType = MediaType.Video,
+                PrimaryImageTag = matchedTmdb is not null ? "premio_" + matchedTmdb.Id : null,
+                PrimaryImageAspectRatio = 2.0 / 3.0
             };
+
+            if (matchedTmdb is not null)
+            {
+                PremioMetadataCache.Register(itemGuid, matchedTmdb);
+            }
 
             existingHints.Add(hint);
 
@@ -152,7 +216,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
 
-                        // Download poster if TMDB match has a poster URI
                         if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null)
                         {
                             var posterBytes = await _tmdbClient.DownloadImageBytesAsync(matchedTmdb.PosterUrl, cancellationToken).ConfigureAwait(false);
@@ -176,14 +239,46 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Background task catches all exceptions to avoid unhandled thread faults.")]
     private Task<QueryResult<BaseItemDto>> EnrichQueryResultAsync(
         QueryResult<BaseItemDto> queryResult,
-        IReadOnlyList<PremiumizeSearchItem> items,
         IReadOnlyList<TmdbItem> tmdbItems,
+        IReadOnlyList<PremiumizeSearchItem> premiumizeItems,
         CancellationToken cancellationToken)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
-        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
 
-        foreach (var item in items)
+        // 1. Add TMDB items
+        foreach (var tmdbItem in tmdbItems)
+        {
+            if (string.Equals(tmdbItem.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var isTv = string.Equals(tmdbItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var itemGuid = GenerateDeterministicGuid($"tmdb:{tmdbItem.MediaType}:{tmdbItem.Id}");
+            PremioMetadataCache.Register(itemGuid, tmdbItem);
+
+            var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
+            int.TryParse(tmdbItem.Year, out var prodYear);
+
+            var dto = new BaseItemDto
+            {
+                Id = itemGuid,
+                Name = displayName,
+                Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
+                MediaType = MediaType.Video,
+                Overview = tmdbItem.Overview,
+                ProductionYear = prodYear > 0 ? prodYear : null,
+                PrimaryImageAspectRatio = 2.0 / 3.0,
+                ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
+                IsFolder = false
+            };
+
+            existingItems.Add(dto);
+        }
+
+        // 2. Add direct Premiumize items
+        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
+        foreach (var item in premiumizeItems)
         {
             if (string.Equals(item.Type, "folder", StringComparison.OrdinalIgnoreCase))
             {
@@ -197,8 +292,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 item.Name.Contains(t.DisplayTitle, StringComparison.OrdinalIgnoreCase)) ?? primaryTmdb;
 
             var displayName = matchedTmdb is not null && !string.IsNullOrWhiteSpace(matchedTmdb.DisplayTitle)
-                ? $"[Premio] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
-                : $"[Premio] {item.Name}";
+                ? $"[Premio Cloud] {matchedTmdb.DisplayTitle}{(matchedTmdb.Year is not null ? $" ({matchedTmdb.Year})" : string.Empty)}"
+                : $"[Premio Cloud] {item.Name}";
 
             var dto = new BaseItemDto
             {
@@ -207,8 +302,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
                 Overview = matchedTmdb?.Overview,
+                PrimaryImageAspectRatio = 2.0 / 3.0,
+                ImageTags = matchedTmdb is not null ? new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + matchedTmdb.Id } } : null,
                 IsFolder = false
             };
+
+            if (matchedTmdb is not null)
+            {
+                PremioMetadataCache.Register(itemGuid, matchedTmdb);
+            }
 
             existingItems.Add(dto);
 
