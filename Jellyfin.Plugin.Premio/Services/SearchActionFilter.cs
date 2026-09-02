@@ -152,18 +152,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
             var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
-            int.TryParse(tmdbItem.Year, out var prodYear);
+            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var hint = new SearchHint
             {
                 Id = itemGuid,
-                ItemId = itemGuid,
                 Name = displayName,
                 Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
                 PrimaryImageTag = "premio_" + tmdbItem.Id,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
-                ProductionYear = prodYear > 0 ? prodYear : null
+                ProductionYear = prodYear
             };
 
             existingHints.Add(hint);
@@ -191,7 +190,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var hint = new SearchHint
             {
                 Id = itemGuid,
-                ItemId = itemGuid,
                 Name = displayName,
                 Type = isTv ? BaseItemKind.Episode : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
@@ -258,7 +256,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             PremioMetadataCache.Register(itemGuid, tmdbItem);
 
             var displayName = $"[Premio] {tmdbItem.DisplayTitle}" + (!string.IsNullOrWhiteSpace(tmdbItem.Year) ? $" ({tmdbItem.Year})" : string.Empty);
-            int.TryParse(tmdbItem.Year, out var prodYear);
+            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var dto = new BaseItemDto
             {
@@ -267,7 +265,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
                 MediaType = MediaType.Video,
                 Overview = tmdbItem.Overview,
-                ProductionYear = prodYear > 0 ? prodYear : null,
+                ProductionYear = prodYear,
                 PrimaryImageAspectRatio = 2.0 / 3.0,
                 ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + tmdbItem.Id } },
                 IsFolder = false
