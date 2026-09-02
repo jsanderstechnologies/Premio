@@ -424,7 +424,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             LocationType = LocationType.FileSystem,
             MediaStreams = defaultStreams,
             People = Array.Empty<BaseItemPerson>(),
-            Chapters = Array.Empty<ChapterDto>(),
             RemoteTrailers = Array.Empty<MediaUrl>(),
             ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } }
         };
