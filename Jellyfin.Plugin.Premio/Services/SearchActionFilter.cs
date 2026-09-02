@@ -516,7 +516,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         try
         {
             // 1. Send magnet to Premiumize Transfer manager & DirectDL
-            _ = _premiumizeClient.CreateTransferAsync(mediaSourceId, cancellationToken);
+            await _premiumizeClient.CreateTransferAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
             var streamUrl = ResolvePlayableStreamUrl(directDl);
 

@@ -201,9 +201,13 @@ public sealed partial class PremiumizeClient
                 new KeyValuePair<string, string>("src", src)
             ]);
 
+            LogSendingTransfer(_logger, src);
+
             var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
                                           .ConfigureAwait(false);
             httpResponse.EnsureSuccessStatusCode();
+            var responseJson = await httpResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            LogTransferResponse(_logger, responseJson);
         }
         catch (Exception ex)
         {
@@ -303,6 +307,12 @@ public sealed partial class PremiumizeClient
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Resolved stream URL for item '{ItemId}'")]
     private static partial void LogResolvedStreamUrl(ILogger logger, string itemId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Sending transfer to Premiumize: {Source}")]
+    private static partial void LogSendingTransfer(ILogger logger, string source);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Premiumize transfer response: {ResponseJson}")]
+    private static partial void LogTransferResponse(ILogger logger, string responseJson);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Transfer creation failed: {ErrorMessage}")]
     private static partial void LogTransferCreateFailed(ILogger logger, string errorMessage);
