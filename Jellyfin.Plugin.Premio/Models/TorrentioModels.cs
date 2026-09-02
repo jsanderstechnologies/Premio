@@ -12,13 +12,13 @@ public sealed class TorrentioResponse
 {
     /// <summary>Gets the list of available torrent streams.</summary>
     [JsonPropertyName("streams")]
-    public IReadOnlyList<TorrentioStream> Streams { get; init; } = [];
+    public IReadOnlyList<TorrentioStreamResult> Streams { get; init; } = [];
 }
 
 /// <summary>
-/// Represents a single torrent stream returned by Torrentio.
+/// Represents a single torrent stream result returned by Torrentio.
 /// </summary>
-public sealed partial class TorrentioStream
+public sealed partial class TorrentioStreamResult
 {
     private static readonly Regex ResolutionRegex = new(
         @"(4[kK]|2160[pP]|1080[pP]|720[pP]|480[pP]|HD|CAM)",

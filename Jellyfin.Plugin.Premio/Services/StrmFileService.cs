@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -63,6 +64,7 @@ public sealed partial class StrmFileService
     /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
     public async Task<string?> WriteMediaStrmFileAsync(
         string title,
         Uri streamUri,
@@ -110,6 +112,7 @@ public sealed partial class StrmFileService
     /// <param name="posterBytes">Raw image bytes to save.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The path to the saved poster image, or null if invalid.</returns>
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File path is based on sanitized .strm target file within configured directory.")]
     public async Task<string?> SavePosterImageAsync(
         string strmPath,
         byte[] posterBytes,

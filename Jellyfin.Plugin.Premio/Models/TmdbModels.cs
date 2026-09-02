@@ -91,19 +91,19 @@ public sealed class TmdbItem
     }
 
     /// <summary>
-    /// Gets the absolute full-resolution poster URL.
+    /// Gets the absolute full-resolution poster URI.
     /// </summary>
     [JsonIgnore]
-    public string? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
-        ? $"https://image.tmdb.org/t/p/w500{PosterPath}"
+    public Uri? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
+        ? new Uri($"https://image.tmdb.org/t/p/w500{PosterPath}")
         : null;
 
     /// <summary>
-    /// Gets the absolute backdrop URL.
+    /// Gets the absolute backdrop URI.
     /// </summary>
     [JsonIgnore]
-    public string? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
-        ? $"https://image.tmdb.org/t/p/w1280{BackdropPath}"
+    public Uri? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
+        ? new Uri($"https://image.tmdb.org/t/p/w1280{BackdropPath}")
         : null;
 }
 
@@ -126,7 +126,7 @@ public sealed class TmdbDetailedItem
     [JsonPropertyName("id")]
     public int Id { get; init; }
 
-    /// <summary>Gets the IMDB ID.</summary>
+    /// <summary>Gets or sets the IMDB ID.</summary>
     [JsonPropertyName("imdb_id")]
     public string? ImdbId { get; set; }
 
@@ -189,15 +189,15 @@ public sealed class TmdbDetailedItem
         }
     }
 
-    /// <summary>Gets the full poster URL.</summary>
+    /// <summary>Gets the full poster URI.</summary>
     [JsonIgnore]
-    public string? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
-        ? $"https://image.tmdb.org/t/p/w500{PosterPath}"
+    public Uri? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
+        ? new Uri($"https://image.tmdb.org/t/p/w500{PosterPath}")
         : null;
 
-    /// <summary>Gets the full backdrop URL.</summary>
+    /// <summary>Gets the full backdrop URI.</summary>
     [JsonIgnore]
-    public string? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
-        ? $"https://image.tmdb.org/t/p/w1280{BackdropPath}"
+    public Uri? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
+        ? new Uri($"https://image.tmdb.org/t/p/w1280{BackdropPath}")
         : null;
 }

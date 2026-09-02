@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Models;
 using Jellyfin.Plugin.Premio.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -108,7 +107,7 @@ public sealed partial class PremioController : ControllerBase
     /// <returns>A list of available torrent streams with cache status.</returns>
     [HttpGet("Streams")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<IReadOnlyList<TorrentioStream>>> GetStreams(
+    public async Task<ActionResult<IReadOnlyList<TorrentioStreamResult>>> GetStreams(
         [FromQuery] string type,
         [FromQuery] string imdbId,
         [FromQuery] int season = 1,
@@ -127,7 +126,7 @@ public sealed partial class PremioController : ControllerBase
 
         if (streams.Count == 0)
         {
-            return Ok(Array.Empty<TorrentioStream>());
+            return Ok(Array.Empty<TorrentioStreamResult>());
         }
 
         // Check Premiumize cache status for all streams
@@ -172,13 +171,14 @@ public sealed partial class PremioController : ControllerBase
     [HttpPost("AddStream")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "API controller returns HTTP 500 on unexpected faults.")]
     public async Task<IActionResult> AddStream(
         [FromBody] AddStreamRequest request,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (string.IsNullOrWhiteSpace(request.InfoHash) && string.IsNullOrWhiteSpace(request.MagnetUrl))
+        if (string.IsNullOrWhiteSpace(request.InfoHash) && request.MagnetUrl is null)
         {
             return BadRequest(new { message = "infoHash or magnetUrl is required." });
         }
@@ -190,7 +190,7 @@ public sealed partial class PremioController : ControllerBase
 
         try
         {
-            var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!;
+            var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!.OriginalString;
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
 
             var streamUrl = directDl.Location;
@@ -221,9 +221,9 @@ public sealed partial class PremioController : ControllerBase
             }
 
             // Download and save poster image
-            if (!string.IsNullOrWhiteSpace(request.PosterUrl) && Uri.TryCreate(request.PosterUrl, UriKind.Absolute, out var posterUri))
+            if (request.PosterUrl is not null)
             {
-                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(request.PosterUrl, cancellationToken).ConfigureAwait(false);
                 if (posterBytes is not null && posterBytes.Length > 0)
                 {
                     await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
@@ -286,11 +286,11 @@ public sealed class AddStreamRequest
     [JsonPropertyName("infoHash")]
     public string? InfoHash { get; set; }
 
-    /// <summary>Gets or sets the magnet URL.</summary>
+    /// <summary>Gets or sets the magnet URI.</summary>
     [JsonPropertyName("magnetUrl")]
-    public string? MagnetUrl { get; set; }
+    public Uri? MagnetUrl { get; set; }
 
-    /// <summary>Gets or sets the poster URL.</summary>
+    /// <summary>Gets or sets the poster URI.</summary>
     [JsonPropertyName("posterUrl")]
-    public string? PosterUrl { get; set; }
+    public Uri? PosterUrl { get; set; }
 }

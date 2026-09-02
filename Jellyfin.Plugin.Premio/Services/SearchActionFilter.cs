@@ -77,14 +77,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         {
             var cancellationToken = context.HttpContext.RequestAborted;
 
-            // Search Premiumize and TMDB concurrently
-            var searchTask = _client.SearchAsync(searchTerm, cancellationToken);
-            var tmdbTask = _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken);
-
-            await Task.WhenAll(searchTask, tmdbTask).ConfigureAwait(false);
-
-            var searchResults = searchTask.Result;
-            var tmdbResults = tmdbTask.Result;
+            // Search Premiumize and TMDB
+            var searchResults = await _client.SearchAsync(searchTerm, cancellationToken).ConfigureAwait(false);
+            var tmdbResults = await _tmdbClient.SearchMultiAsync(searchTerm, cancellationToken).ConfigureAwait(false);
 
             if (searchResults.Count == 0 && tmdbResults.Count == 0)
             {
@@ -117,7 +112,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         CancellationToken cancellationToken)
     {
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
-        var primaryTmdb = tmdbItems.FirstOrDefault();
+        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
 
         foreach (var item in items)
         {
@@ -157,10 +152,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
 
-                        // Download poster if TMDB match has a poster path
-                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null && Uri.TryCreate(matchedTmdb.PosterUrl, UriKind.Absolute, out var posterUri))
+                        // Download poster if TMDB match has a poster URI
+                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null)
                         {
-                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(matchedTmdb.PosterUrl, cancellationToken).ConfigureAwait(false);
                             if (posterBytes is not null && posterBytes.Length > 0)
                             {
                                 await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
@@ -186,7 +181,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         CancellationToken cancellationToken)
     {
         var existingItems = new List<BaseItemDto>(queryResult.Items);
-        var primaryTmdb = tmdbItems.FirstOrDefault();
+        var primaryTmdb = tmdbItems.Count > 0 ? tmdbItems[0] : null;
 
         foreach (var item in items)
         {
@@ -227,9 +222,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var strmPath = await _strmService.WriteMediaStrmFileAsync(item.Name, uri, isTv, cancellationToken).ConfigureAwait(false);
 
-                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null && Uri.TryCreate(matchedTmdb.PosterUrl, UriKind.Absolute, out var posterUri))
+                        if (!string.IsNullOrWhiteSpace(strmPath) && matchedTmdb?.PosterUrl is not null)
                         {
-                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUri, cancellationToken).ConfigureAwait(false);
+                            var posterBytes = await _tmdbClient.DownloadImageBytesAsync(matchedTmdb.PosterUrl, cancellationToken).ConfigureAwait(false);
                             if (posterBytes is not null && posterBytes.Length > 0)
                             {
                                 await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);

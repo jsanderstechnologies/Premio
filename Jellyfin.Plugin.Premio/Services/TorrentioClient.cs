@@ -38,7 +38,7 @@ public sealed partial class TorrentioClient
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list of available torrent streams.</returns>
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Torrentio lookup failures are non-critical and should not break the UI.")]
-    public async Task<IReadOnlyList<TorrentioStream>> GetMovieStreamsAsync(
+    public async Task<IReadOnlyList<TorrentioStreamResult>> GetMovieStreamsAsync(
         string imdbId,
         CancellationToken cancellationToken = default)
     {
@@ -71,7 +71,7 @@ public sealed partial class TorrentioClient
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list of available torrent streams.</returns>
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Torrentio lookup failures are non-critical and should not break the UI.")]
-    public async Task<IReadOnlyList<TorrentioStream>> GetSeriesStreamsAsync(
+    public async Task<IReadOnlyList<TorrentioStreamResult>> GetSeriesStreamsAsync(
         string imdbId,
         int season,
         int episode,
