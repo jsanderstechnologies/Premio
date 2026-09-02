@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 
 /// <summary>
 /// ASP.NET Core Action Filter that intercepts Jellyfin search, details, image, and playback requests
-/// for virtual TMDB items to provide native item details with a Torrentio stream version dropdown
+/// for virtual TMDB items and existing library items to provide native item details with a Torrentio stream version dropdown
 /// and automatic Premiumize debrid library creation on stream selection.
 /// </summary>
 public sealed partial class SearchActionFilter : IAsyncActionFilter
@@ -136,14 +136,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // ---------------------------------------------------------------------
-        // 2. Intercept Item Details screen opening (GET /Items/{id} or /Users/{userId}/Items/{id})
+        // 2. Intercept Virtual Item Details screen opening (GET /Items/{id} or /Users/{userId}/Items/{id})
         // ---------------------------------------------------------------------
         if (HttpMethods.IsGet(context.HttpContext.Request.Method) &&
             !requestPath.Contains("/Images/", StringComparison.OrdinalIgnoreCase) &&
             !requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
         {
             var requestedId = ExtractItemId(context);
-            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
+            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null && cachedItem.Id > 0)
             {
                 var detailsDto = await BuildItemDetailsDtoAsync(requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
                 if (detailsDto is not null)
@@ -174,7 +174,17 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var executedContext = await next().ConfigureAwait(false);
 
         // ---------------------------------------------------------------------
-        // 4. Intercept Search requests (/Search/Hints and /Items?searchTerm=...)
+        // 4. Enrich existing library item details with Torrentio stream version dropdown
+        // ---------------------------------------------------------------------
+        if (executedContext.Result is ObjectResult objResult && objResult.Value is BaseItemDto libraryDto &&
+            (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Series || libraryDto.Type == BaseItemKind.Episode))
+        {
+            await EnrichExistingLibraryItemDtoAsync(libraryDto, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // ---------------------------------------------------------------------
+        // 5. Intercept Search requests (/Search/Hints and /Items?searchTerm=...)
         // ---------------------------------------------------------------------
         var searchTerm = context.HttpContext.Request.Query["searchTerm"].ToString();
         if (string.IsNullOrWhiteSpace(searchTerm))
@@ -314,6 +324,118 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return dto;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Library enrichment catches all exceptions to avoid disrupting native library item rendering.")]
+    private async Task EnrichExistingLibraryItemDtoAsync(BaseItemDto itemDto, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var isTv = itemDto.Type == BaseItemKind.Series || itemDto.Type == BaseItemKind.Episode;
+            string? imdbId = null;
+
+            if (itemDto.ProviderIds is not null)
+            {
+                itemDto.ProviderIds.TryGetValue("Imdb", out imdbId);
+                if (string.IsNullOrWhiteSpace(imdbId) && itemDto.ProviderIds.TryGetValue("Tmdb", out var tmdbIdStr) && int.TryParse(tmdbIdStr, out var tmdbId))
+                {
+                    imdbId = await _tmdbClient.GetExternalImdbIdAsync(isTv ? "tv" : "movie", tmdbId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(imdbId))
+            {
+                var searchResults = await _tmdbClient.SearchMultiAsync(itemDto.Name, cancellationToken).ConfigureAwait(false);
+                var match = searchResults.FirstOrDefault(r => isTv
+                    ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase));
+
+                if (match is not null)
+                {
+                    imdbId = await _tmdbClient.GetExternalImdbIdAsync(match.MediaType ?? (isTv ? "tv" : "movie"), match.Id, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(imdbId))
+            {
+                return;
+            }
+
+            var streams = isTv
+                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
+                : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+
+            if (streams.Count == 0)
+            {
+                return;
+            }
+
+            var mediaSources = new List<MediaSourceInfo>
+            {
+                new MediaSourceInfo
+                {
+                    Id = "select_stream",
+                    Name = "Select a Stream",
+                    Type = MediaSourceType.Default,
+                    IsRemote = true,
+                    SupportsDirectPlay = false,
+                    SupportsDirectStream = false,
+                    SupportsTranscoding = false
+                }
+            };
+
+            if (itemDto.MediaSources is not null && itemDto.MediaSources.Length > 0)
+            {
+                foreach (var existing in itemDto.MediaSources)
+                {
+                    if (existing.Id != "select_stream")
+                    {
+                        var updatedName = !string.IsNullOrWhiteSpace(existing.Name) && !existing.Name.StartsWith("Current", StringComparison.OrdinalIgnoreCase)
+                            ? $"Current: {existing.Name}"
+                            : existing.Name;
+
+                        existing.Name = updatedName;
+                        mediaSources.Add(existing);
+                    }
+                }
+            }
+
+            foreach (var stream in streams)
+            {
+                var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
+                var label = $"{stream.CleanReleaseName}{sizeStr}";
+
+                mediaSources.Add(new MediaSourceInfo
+                {
+                    Id = stream.InfoHash,
+                    Name = label,
+                    Path = $"magnet:?xt=urn:btih:{stream.InfoHash}",
+                    Type = MediaSourceType.Default,
+                    Container = "mkv",
+                    VideoType = VideoType.VideoFile,
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = true
+                });
+            }
+
+            itemDto.MediaSources = mediaSources.ToArray();
+
+            // Register item in Premio cache for playback stream switching
+            var syntheticItem = new TmdbItem
+            {
+                Id = 0,
+                Title = itemDto.Name,
+                MediaType = isTv ? "tv" : "movie",
+                ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
+            };
+            PremioMetadataCache.Register(itemDto.Id, syntheticItem);
+        }
+        catch (Exception ex)
+        {
+            LogLibraryEnrichmentFailed(_logger, itemDto.Name, ex.Message);
+        }
+    }
+
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "PlaybackInfo must gracefully return stream URL or fallback without crashing.")]
     private async Task<PlaybackInfoResponse?> HandlePlaybackInfoAsync(
         ActionExecutingContext context,
@@ -327,7 +449,23 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
         {
             var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
-            var imdbId = await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
+            var imdbId = item.Id > 0
+                ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false)
+                : null;
+
+            if (string.IsNullOrWhiteSpace(imdbId))
+            {
+                var searchResults = await _tmdbClient.SearchMultiAsync(item.DisplayTitle, cancellationToken).ConfigureAwait(false);
+                var match = searchResults.FirstOrDefault(r => isTv
+                    ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase));
+
+                if (match is not null)
+                {
+                    imdbId = await _tmdbClient.GetExternalImdbIdAsync(match.MediaType ?? (isTv ? "tv" : "movie"), match.Id, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
@@ -688,4 +826,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Playback resolution failed for title '{Title}': {ErrorMessage}")]
     private static partial void LogPlaybackResolutionFailed(ILogger logger, string title, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to enrich existing library item '{Title}': {ErrorMessage}")]
+    private static partial void LogLibraryEnrichmentFailed(ILogger logger, string title, string errorMessage);
 }
