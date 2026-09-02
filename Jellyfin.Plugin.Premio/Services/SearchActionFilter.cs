@@ -627,12 +627,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     {
         if (context.ActionArguments.TryGetValue("itemId", out var val) && val is not null)
         {
-            if (val is Guid g)
+            if (val is Guid g && g != Guid.Empty)
             {
                 return g;
             }
 
-            if (val is string s && Guid.TryParse(s, out var parsed))
+            if (val is string s && Guid.TryParse(s, out var parsed) && parsed != Guid.Empty)
             {
                 return parsed;
             }
@@ -640,34 +640,38 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         if (context.ActionArguments.TryGetValue("id", out var valId) && valId is not null)
         {
-            if (valId is Guid g2)
+            if (valId is Guid g2 && g2 != Guid.Empty)
             {
                 return g2;
             }
 
-            if (valId is string s2 && Guid.TryParse(s2, out var parsed2))
+            if (valId is string s2 && Guid.TryParse(s2, out var parsed2) && parsed2 != Guid.Empty)
             {
                 return parsed2;
             }
         }
 
+        foreach (var arg in context.ActionArguments.Values)
+        {
+            if (arg is Guid gArg && gArg != Guid.Empty)
+            {
+                return gArg;
+            }
+
+            if (arg is string sArg && Guid.TryParse(sArg, out var pArg) && pArg != Guid.Empty)
+            {
+                return pArg;
+            }
+        }
+
         var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
-        var imgMatch = ItemImageRegex.Match(requestPath);
-        if (imgMatch.Success && Guid.TryParse(imgMatch.Groups[1].Value, out var matchedGuid))
+        var guidMatches = Regex.Matches(requestPath, @"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}|[a-fA-F0-9]{32}");
+        for (var i = guidMatches.Count - 1; i >= 0; i--)
         {
-            return matchedGuid;
-        }
-
-        var detailsMatch = ItemDetailsRegex.Match(requestPath);
-        if (detailsMatch.Success && Guid.TryParse(detailsMatch.Groups[1].Value, out var detailsGuid))
-        {
-            return detailsGuid;
-        }
-
-        var pbMatch = PlaybackInfoRegex.Match(requestPath);
-        if (pbMatch.Success && Guid.TryParse(pbMatch.Groups[1].Value, out var pbGuid))
-        {
-            return pbGuid;
+            if (Guid.TryParse(guidMatches[i].Value, out var matchedGuid) && matchedGuid != Guid.Empty)
+            {
+                return matchedGuid;
+            }
         }
 
         return Guid.Empty;
