@@ -153,9 +153,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // ---------------------------------------------------------------------
-        // 3. Intercept PlaybackInfo (when user selects a stream version and plays)
+        // 3. Intercept PlaybackInfo and Video Stream requests
         // ---------------------------------------------------------------------
-        if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
+        if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase) ||
+            (requestPath.Contains("/Videos/", StringComparison.OrdinalIgnoreCase) && requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase)))
         {
             LogInterceptedPlaybackInfo(_logger, requestPath);
             var requestedId = ExtractItemId(context);
@@ -182,11 +183,23 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 if (cachedItem is not null)
                 {
                     LogResolvingItemForPlayback(_logger, cachedItem.DisplayTitle);
-                    var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
-                    if (playbackResult is not null)
+                    if (requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
                     {
-                        context.Result = new ObjectResult(playbackResult);
-                        return;
+                        var streamUrl = await ResolveDirectStreamUrlAsync(context, cachedItem, cancellationToken).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(streamUrl))
+                        {
+                            context.Result = new RedirectResult(streamUrl);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
+                        if (playbackResult is not null)
+                        {
+                            context.Result = new ObjectResult(playbackResult);
+                            return;
+                        }
                     }
                 }
             }
@@ -282,6 +295,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 Id = "select_stream",
                 Name = "Select a Stream",
+                Path = $"/Videos/{requestedId}/stream.mkv?MediaSourceId=select_stream",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
@@ -297,12 +311,13 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         {
             var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
             var label = $"{stream.CleanReleaseName}{sizeStr}";
+            var streamId = !string.IsNullOrWhiteSpace(stream.InfoHash) ? stream.InfoHash : Guid.NewGuid().ToString("N");
 
             mediaSources.Add(new MediaSourceInfo
             {
-                Id = !string.IsNullOrWhiteSpace(stream.InfoHash) ? stream.InfoHash : Guid.NewGuid().ToString("N"),
+                Id = streamId,
                 Name = label,
-                Path = !string.IsNullOrWhiteSpace(stream.InfoHash) ? $"magnet:?xt=urn:btih:{stream.InfoHash}" : string.Empty,
+                Path = $"/Videos/{requestedId}/stream.mkv?MediaSourceId={streamId}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
                 Container = "mkv",
@@ -464,10 +479,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
     }
 
-    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "PlaybackInfo must gracefully return stream URL or fallback without crashing.")]
-    private async Task<PlaybackInfoResponse?> HandlePlaybackInfoAsync(
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Direct stream resolution must not crash the filter.")]
+    private async Task<string?> ResolveDirectStreamUrlAsync(
         ActionExecutingContext context,
-        Guid requestedId,
         TmdbItem item,
         CancellationToken cancellationToken)
     {
@@ -549,6 +563,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 season,
                 episode,
                 cancellationToken).ConfigureAwait(false);
+
             if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
             {
                 var posterBytes = await _tmdbClient.DownloadImageBytesAsync(item.PosterUrl, cancellationToken).ConfigureAwait(false);
@@ -558,34 +573,51 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 }
             }
 
-            // 3. Return PlaybackInfoResponse with direct Premiumize stream URL
-            return new PlaybackInfoResponse
-            {
-                MediaSources = new[]
-                {
-                    new MediaSourceInfo
-                    {
-                        Id = mediaSourceId,
-                        Path = streamUrl,
-                        TranscodingUrl = streamUrl,
-                        Protocol = MediaProtocol.Http,
-                        Type = MediaSourceType.Default,
-                        Container = "mkv",
-                        VideoType = VideoType.VideoFile,
-                        IsRemote = true,
-                        SupportsDirectPlay = true,
-                        SupportsDirectStream = true,
-                        SupportsTranscoding = true
-                    }
-                },
-                PlaySessionId = Guid.NewGuid().ToString("N")
-            };
+            return streamUrl;
         }
         catch (Exception ex)
         {
             LogPlaybackResolutionFailed(_logger, item.DisplayTitle, ex.Message);
             return null;
         }
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "PlaybackInfo must gracefully return stream URL or fallback without crashing.")]
+    private async Task<PlaybackInfoResponse?> HandlePlaybackInfoAsync(
+        ActionExecutingContext context,
+        Guid requestedId,
+        TmdbItem item,
+        CancellationToken cancellationToken)
+    {
+        var mediaSourceId = ExtractMediaSourceId(context) ?? "select_stream";
+        var streamUrl = await ResolveDirectStreamUrlAsync(context, item, cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(streamUrl))
+        {
+            return null;
+        }
+
+        return new PlaybackInfoResponse
+        {
+            MediaSources = new[]
+            {
+                new MediaSourceInfo
+                {
+                    Id = mediaSourceId,
+                    Path = streamUrl,
+                    TranscodingUrl = streamUrl,
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = "mkv",
+                    VideoType = VideoType.VideoFile,
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = true
+                }
+            },
+            PlaySessionId = Guid.NewGuid().ToString("N")
+        };
     }
 
     private static string? ExtractMediaSourceId(ActionExecutingContext context)
