@@ -422,9 +422,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
             MediaSources = mediaSources.ToArray(),
             LocationType = LocationType.FileSystem,
-            MediaStreams = defaultStreams.ToList(),
+            MediaStreams = defaultStreams,
             People = Array.Empty<BaseItemPerson>(),
-            Chapters = Array.Empty<ChapterInfoDto>(),
+            Chapters = Array.Empty<ChapterDto>(),
             RemoteTrailers = Array.Empty<MediaUrl>(),
             ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } }
         };
