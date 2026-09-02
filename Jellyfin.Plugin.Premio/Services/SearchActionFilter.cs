@@ -306,7 +306,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             Name = displayTitle,
             OriginalTitle = details?.Title ?? item.Title,
             Overview = details?.Overview ?? item.Overview,
-            Tagline = details?.Tagline,
+            Taglines = !string.IsNullOrWhiteSpace(details?.Tagline) ? new[] { details.Tagline } : Array.Empty<string>(),
             Genres = details?.Genres?.Select(g => g.Name).ToArray() ?? Array.Empty<string>(),
             CommunityRating = details is not null ? (float)details.VoteAverage : (float)item.VoteAverage,
             RunTimeTicks = details?.Runtime > 0 ? TimeSpan.FromMinutes(details.Runtime.Value).Ticks : null,

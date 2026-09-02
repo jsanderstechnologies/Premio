@@ -173,6 +173,18 @@ public sealed class TmdbDetailedItem
     [JsonPropertyName("first_air_date")]
     public string? FirstAirDate { get; init; }
 
+    /// <summary>Gets the tagline string.</summary>
+    [JsonPropertyName("tagline")]
+    public string? Tagline { get; init; }
+
+    /// <summary>Gets the average vote score.</summary>
+    [JsonPropertyName("vote_average")]
+    public double VoteAverage { get; init; }
+
+    /// <summary>Gets the genres list.</summary>
+    [JsonPropertyName("genres")]
+    public IReadOnlyList<TmdbGenre> Genres { get; init; } = [];
+
     /// <summary>Gets the runtime in minutes.</summary>
     [JsonPropertyName("runtime")]
     public int? Runtime { get; init; }
@@ -215,4 +227,18 @@ public sealed class TmdbDetailedItem
     public Uri? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
         ? new Uri($"https://image.tmdb.org/t/p/w1280{BackdropPath}")
         : null;
+}
+
+/// <summary>
+/// Represents a genre returned by TMDB.
+/// </summary>
+public sealed class TmdbGenre
+{
+    /// <summary>Gets the genre ID.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    /// <summary>Gets the genre name.</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = string.Empty;
 }
