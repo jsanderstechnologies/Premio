@@ -99,8 +99,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
+            var requestPath = context.HttpContext.Request.Path.Value ?? string.Empty;
             var itemTypesParam = context.HttpContext.Request.Query["includeItemTypes"].ToString();
-            var allowedTypes = ParseAllowedTypes(itemTypesParam);
+            var allowedTypes = ParseAllowedTypes(itemTypesParam, requestPath);
 
             if (executedContext.Result is ObjectResult objectResult && objectResult.Value is not null)
             {
@@ -148,17 +149,28 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return Guid.Empty;
     }
 
-    private static HashSet<string>? ParseAllowedTypes(string? raw)
+    private static HashSet<string>? ParseAllowedTypes(string? raw, string requestPath)
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (requestPath.Contains("/Persons", StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            set.Add("Person");
+            return set;
         }
 
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        if (requestPath.Contains("/Artists", StringComparison.OrdinalIgnoreCase))
         {
-            set.Add(part);
+            set.Add("MusicArtist");
+            return set;
+        }
+
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                set.Add(part);
+            }
         }
 
         return set.Count > 0 ? set : null;
@@ -166,38 +178,45 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     private static bool MatchesFilter(TmdbItem item, HashSet<string>? allowedTypes)
     {
-        if (allowedTypes is null)
+        if (allowedTypes is not null)
         {
-            return true;
-        }
-
-        if (string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
-        {
-            return allowedTypes.Contains("Movie");
-        }
-
-        if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
-        {
-            return allowedTypes.Contains("Series") || allowedTypes.Contains("Episode");
-        }
-
-        if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
-        {
-            if (allowedTypes.Contains("Person"))
+            if (allowedTypes.Contains("Video") || allowedTypes.Contains("Folder") || allowedTypes.Contains("Photo") || allowedTypes.Contains("Audio"))
             {
-                return true;
+                return false;
             }
 
-            if (allowedTypes.Contains("MusicArtist"))
+            if (string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
             {
-                return string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
+                return allowedTypes.Contains("Movie");
+            }
+
+            if (string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+            {
+                return allowedTypes.Contains("Series") || allowedTypes.Contains("Episode");
+            }
+
+            if (string.Equals(item.MediaType, "person", StringComparison.OrdinalIgnoreCase))
+            {
+                var isMusic = string.Equals(item.KnownForDepartment, "Music", StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(item.KnownForDepartment, "Sound", StringComparison.OrdinalIgnoreCase);
+
+                if (allowedTypes.Contains("MusicArtist"))
+                {
+                    return isMusic;
+                }
+
+                if (allowedTypes.Contains("Person"))
+                {
+                    return !isMusic;
+                }
+
+                return false;
             }
 
             return false;
         }
 
-        return false;
+        return true;
     }
 
     private static SearchHintResult EnrichSearchHints(
