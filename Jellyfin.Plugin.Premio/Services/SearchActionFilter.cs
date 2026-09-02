@@ -340,9 +340,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
             MediaType = MediaType.Video,
             IsFolder = isTv,
-            CanPlay = true,
-            CanDownload = false,
-            PlayAccess = PlayAccess.Full,
             PrimaryImageAspectRatio = 2.0 / 3.0,
             ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
@@ -571,7 +568,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         Id = mediaSourceId,
                         Path = streamUrl,
-                        DirectStreamUrl = streamUrl,
                         TranscodingUrl = streamUrl,
                         Protocol = MediaProtocol.Http,
                         Type = MediaSourceType.Default,
