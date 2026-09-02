@@ -543,6 +543,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 });
             }
 
+            var syntheticItem = new TmdbItem
+            {
+                Id = 0,
+                Title = itemDto.Name,
+                MediaType = isTv ? "tv" : "movie",
+                ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
+            };
+            PremioMetadataCache.Register(itemDto.Id, syntheticItem);
+
             var defaultStreams = new[]
             {
                 new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
@@ -580,16 +589,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
 
             itemDto.MediaSources = mediaSources.ToArray();
-
-            // Register item in Premio cache for playback stream switching
-            var syntheticItem = new TmdbItem
-            {
-                Id = 0,
-                Title = itemDto.Name,
-                MediaType = isTv ? "tv" : "movie",
-                ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
-            };
-            PremioMetadataCache.Register(itemDto.Id, syntheticItem);
         }
         catch (Exception ex)
         {
