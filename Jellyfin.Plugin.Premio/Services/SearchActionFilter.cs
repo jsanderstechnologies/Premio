@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
@@ -46,6 +48,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     private readonly TorrentioClient _torrentioClient;
     private readonly PremiumizeClient _premiumizeClient;
     private readonly StrmFileService _strmService;
+    private readonly ILibraryManager _libraryManager;
     private readonly IServerApplicationHost _appHost;
     private readonly ILogger<SearchActionFilter> _logger;
 
@@ -56,6 +59,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// <param name="torrentioClient">Injected Torrentio client.</param>
     /// <param name="premiumizeClient">Injected Premiumize client.</param>
     /// <param name="strmService">Injected STRM file service.</param>
+    /// <param name="libraryManager">Injected library manager.</param>
     /// <param name="appHost">Injected Jellyfin server host.</param>
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
@@ -63,6 +67,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         TorrentioClient torrentioClient,
         PremiumizeClient premiumizeClient,
         StrmFileService strmService,
+        ILibraryManager libraryManager,
         IServerApplicationHost appHost,
         ILogger<SearchActionFilter> logger)
     {
@@ -70,6 +75,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         _torrentioClient = torrentioClient;
         _premiumizeClient = premiumizeClient;
         _strmService = strmService;
+        _libraryManager = libraryManager;
         _appHost = appHost;
         _logger = logger;
     }
@@ -160,13 +166,32 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (requestPath.Contains("/PlaybackInfo", StringComparison.OrdinalIgnoreCase))
         {
             var requestedId = ExtractItemId(context);
-            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
+            if (requestedId != Guid.Empty)
             {
-                var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
-                if (playbackResult is not null)
+                if (!PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) || cachedItem is null)
                 {
-                    context.Result = new ObjectResult(playbackResult);
-                    return;
+                    var libItem = _libraryManager.GetItemById(requestedId);
+                    if (libItem is not null)
+                    {
+                        var isTv = libItem is Series || libItem is Episode;
+                        cachedItem = new TmdbItem
+                        {
+                            Id = 0,
+                            Title = libItem.Name,
+                            MediaType = isTv ? "tv" : "movie",
+                            ReleaseDate = libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture)
+                        };
+                    }
+                }
+
+                if (cachedItem is not null)
+                {
+                    var playbackResult = await HandlePlaybackInfoAsync(context, requestedId, cachedItem, cancellationToken).ConfigureAwait(false);
+                    if (playbackResult is not null)
+                    {
+                        context.Result = new ObjectResult(playbackResult);
+                        return;
+                    }
                 }
             }
         }
@@ -446,7 +471,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         TmdbItem item,
         CancellationToken cancellationToken)
     {
-        var mediaSourceId = context.HttpContext.Request.Query["MediaSourceId"].ToString();
+        var mediaSourceId = ExtractMediaSourceId(context);
 
         // If mediaSourceId is not specified or placeholder, fetch best stream from Torrentio
         if (string.IsNullOrWhiteSpace(mediaSourceId) || string.Equals(mediaSourceId, "select_stream", StringComparison.OrdinalIgnoreCase))
@@ -498,6 +523,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 return null;
             }
+
+            LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
 
             // 2. Write corresponding .strm file and save poster to Jellyfin Library
             var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
@@ -557,6 +584,40 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             LogPlaybackResolutionFailed(_logger, item.DisplayTitle, ex.Message);
             return null;
         }
+    }
+
+    private static string? ExtractMediaSourceId(ActionExecutingContext context)
+    {
+        var queryVal = context.HttpContext.Request.Query["MediaSourceId"].ToString();
+        if (!string.IsNullOrWhiteSpace(queryVal))
+        {
+            return queryVal;
+        }
+
+        foreach (var kvp in context.ActionArguments)
+        {
+            if (kvp.Value is null)
+            {
+                continue;
+            }
+
+            if (string.Equals(kvp.Key, "mediaSourceId", StringComparison.OrdinalIgnoreCase) && kvp.Value is string sVal && !string.IsNullOrWhiteSpace(sVal))
+            {
+                return sVal;
+            }
+
+            var prop = kvp.Value.GetType().GetProperty("MediaSourceId");
+            if (prop is not null)
+            {
+                var val = prop.GetValue(kvp.Value)?.ToString();
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    return val;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static Guid ExtractItemId(ActionExecutingContext context)
