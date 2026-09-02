@@ -169,6 +169,39 @@ public sealed partial class PremiumizeClient
     }
 
     /// <summary>
+    /// Adds a torrent magnet or infohash to the user's Premiumize Cloud Downloader using <c>POST /transfer/create</c>.
+    /// </summary>
+    /// <param name="magnetOrHash">Magnet link or infohash.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Transfer creation is best-effort alongside DirectDL.")]
+    public async Task CreateTransferAsync(
+        string magnetOrHash,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(magnetOrHash))
+        {
+            return;
+        }
+
+        try
+        {
+            var url = WithKey("transfer/create");
+            using var formContent = new FormUrlEncodedContent(
+            [
+                new KeyValuePair<string, string>("src", magnetOrHash)
+            ]);
+
+            var httpResponse = await _http.PostAsync(new Uri(url, UriKind.RelativeOrAbsolute), formContent, cancellationToken)
+                                          .ConfigureAwait(false);
+            httpResponse.EnsureSuccessStatusCode();
+        }
+        catch (Exception ex)
+        {
+            LogTransferCreateFailed(_logger, ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Retrieves detailed metadata (including a streaming link) for a single item.
     /// Maps to <c>GET /item/details?id=…</c>.
     /// </summary>
@@ -260,6 +293,9 @@ public sealed partial class PremiumizeClient
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Resolved stream URL for item '{ItemId}'")]
     private static partial void LogResolvedStreamUrl(ILogger logger, string itemId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Transfer creation failed: {ErrorMessage}")]
+    private static partial void LogTransferCreateFailed(ILogger logger, string errorMessage);
 }
 
 /// <summary>

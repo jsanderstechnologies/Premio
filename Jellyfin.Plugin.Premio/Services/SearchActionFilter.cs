@@ -486,7 +486,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         try
         {
-            // 1. Send magnet to Premiumize DirectDL
+            // 1. Send magnet to Premiumize Transfer manager & DirectDL
+            _ = _premiumizeClient.CreateTransferAsync(mediaSourceId, cancellationToken);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
             var streamUrl = directDl.Location;
             if (string.IsNullOrWhiteSpace(streamUrl) && directDl.Content is not null && directDl.Content.Count > 0)
@@ -498,6 +499,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 return null;
             }
+
+            LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
 
             // 2. Write corresponding .strm file and save poster to Jellyfin Library
             var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
@@ -826,6 +829,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Playback resolution failed for title '{Title}': {ErrorMessage}")]
     private static partial void LogPlaybackResolutionFailed(ILogger logger, string title, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl}")]
+    private static partial void LogStreamResolved(ILogger logger, string title, string infoHash, string streamUrl);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to enrich existing library item '{Title}': {ErrorMessage}")]
     private static partial void LogLibraryEnrichmentFailed(ILogger logger, string title, string errorMessage);
