@@ -400,6 +400,7 @@ public sealed partial class PremioController : ControllerBase
             }
 
             LogAddedStream(_logger, formattedTitle, strmPath);
+            _strmService.TriggerLibraryRefresh();
             return Ok(new
             {
                 success = true,

@@ -367,6 +367,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     AddPickStreamsExternalUrl(libraryDto);
                 }
+                else if (libraryDto.Type == BaseItemKind.Season)
+                {
+                    AddSeasonPickStreamsExternalUrl(libraryDto);
+                }
                 else if (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Episode)
                 {
                     await EnrichExistingLibraryItemDtoAsync(libraryDto, cancellationToken).ConfigureAwait(false);
@@ -620,6 +624,27 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         episodeDto.ExternalUrls = existingUrls.ToArray();
     }
 
+    private static void AddSeasonPickStreamsExternalUrl(BaseItemDto seasonDto)
+    {
+        var existingUrls = seasonDto.ExternalUrls?.ToList() ?? new List<ExternalUrl>();
+        for (var i = 0; i < existingUrls.Count; i++)
+        {
+            if (existingUrls[i].Name.Contains("Pick Streams", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        var seasonNumber = seasonDto.IndexNumber ?? 1;
+        var seriesIdStr = seasonDto.SeriesId?.ToString() ?? string.Empty;
+        existingUrls.Add(new ExternalUrl
+        {
+            Name = $"🎬 Pick Streams for Season {seasonNumber}",
+            Url = $"/Premio/Web/ShowStreams?seriesId={seriesIdStr}&season={seasonNumber}"
+        });
+        seasonDto.ExternalUrls = existingUrls.ToArray();
+    }
+
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Library enrichment catches all exceptions to avoid disrupting native library item rendering.")]
     private async Task EnrichExistingLibraryItemDtoAsync(BaseItemDto itemDto, CancellationToken cancellationToken)
     {
@@ -695,28 +720,39 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
             };
 
+            var hasRealChosenStream = false;
+
             // If item already exists in library with a current stream, update its properties for browser DirectPlay
             if (itemDto.MediaSources is not null && itemDto.MediaSources.Length > 0)
             {
-                foreach (var existing in itemDto.MediaSources)
+                for (var i = 0; i < itemDto.MediaSources.Length; i++)
                 {
+                    var existing = itemDto.MediaSources[i];
                     if (existing.Id != "select_stream")
                     {
-                        var updatedName = !string.IsNullOrWhiteSpace(existing.Name) && !existing.Name.StartsWith("Current", StringComparison.OrdinalIgnoreCase)
-                            ? $"Current: {existing.Name}"
-                            : (string.IsNullOrWhiteSpace(existing.Name) ? "Current: Saved Stream" : existing.Name);
+                        var path = existing.Path ?? string.Empty;
+                        var isConfiguredStream = (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !path.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase)
+                            || path.Contains("infoHash=", StringComparison.OrdinalIgnoreCase);
 
-                        existing.Name = updatedName;
-                        existing.Container = "mp4";
-                        existing.SupportsDirectPlay = true;
-                        existing.SupportsDirectStream = true;
-                        existing.SupportsTranscoding = true;
-                        existing.Protocol = MediaProtocol.Http;
-                        if (existing.MediaStreams is null || existing.MediaStreams.Count == 0)
+                        if (isConfiguredStream)
                         {
-                            existing.MediaStreams = defaultStreams.ToList();
+                            hasRealChosenStream = true;
+                            var updatedName = !string.IsNullOrWhiteSpace(existing.Name) && !existing.Name.StartsWith("Current", StringComparison.OrdinalIgnoreCase)
+                                ? $"Current: {existing.Name}"
+                                : (string.IsNullOrWhiteSpace(existing.Name) ? "Current: Saved Stream" : existing.Name);
+
+                            existing.Name = updatedName;
+                            existing.Container = "mp4";
+                            existing.SupportsDirectPlay = true;
+                            existing.SupportsDirectStream = true;
+                            existing.SupportsTranscoding = true;
+                            existing.Protocol = MediaProtocol.Http;
+                            if (existing.MediaStreams is null || existing.MediaStreams.Count == 0)
+                            {
+                                existing.MediaStreams = defaultStreams.ToList();
+                            }
+                            mediaSources.Add(existing);
                         }
-                        mediaSources.Add(existing);
                     }
                 }
             }
@@ -798,6 +834,20 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (isTv)
             {
                 AddEpisodeStreamExternalUrl(itemDto, seasonNumber, episodeNumber, searchTitle, imdbId);
+
+                if (!hasRealChosenStream)
+                {
+                    itemDto.PlayAccess = PlayAccess.None;
+                    itemDto.CanPlay = false;
+                    itemDto.CanDownload = false;
+                    itemDto.Taglines = ["⚠️ No stream chosen - Click (i) to select a stream"];
+                }
+                else
+                {
+                    itemDto.PlayAccess = PlayAccess.Full;
+                    itemDto.CanPlay = true;
+                    itemDto.CanDownload = true;
+                }
             }
         }
         catch (Exception ex)
