@@ -846,7 +846,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
 
                     sbDropdown.Append("<div class=\"premio-stream-wrap\" onclick=\"event.stopPropagation();\" style=\"margin: 6px 0 8px 0; padding: 6px 10px; background: rgba(20,20,20,0.85); border: 1px solid #00a4dc; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;\">");
-                    sbDropdown.Append("<span style=\"color: #00a4dc; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;\">Stream:</span>");
+                    sbDropdown.Append("<span style=\"color: #00a4dc; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;\">Version:</span>");
                     sbDropdown.Append("<select class=\"emby-select\" style=\"background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font-size: 11px; max-width: 280px; cursor: pointer;\" ");
                     sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
                     sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
@@ -856,17 +856,16 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
                     if (!hasRealChosenStream)
                     {
-                        sbDropdown.Append("<option value=\"\" disabled selected>-- Choose a Stream --</option>");
+                        sbDropdown.Append("<option value=\"\" disabled selected>Select a Stream</option>");
                     }
 
                     for (var sIdx = 0; sIdx < streams.Count; sIdx++)
                     {
                         var st = streams[sIdx];
-                        var cacheBadge = st.IsCached ? "⚡" : "⏳";
                         var sz = !string.IsNullOrWhiteSpace(st.FileSize) ? $" ({st.FileSize})" : string.Empty;
-                        var text = $"[{cacheBadge}] {st.CleanReleaseName}{sz}";
+                        var text = $"{st.CleanReleaseName}{sz}";
                         var isSelected = hasRealChosenStream && sIdx == 0 ? "selected" : string.Empty;
-                        sbDropdown.Append(CultureInfo.InvariantCulture, $"<option value=\"{WebUtility.HtmlEncode(st.InfoHash)}\" {isSelected}>{WebUtility.HtmlEncode(text)}</option>");
+                        sbDropdown.Append("<option value=\"").Append(WebUtility.HtmlEncode(st.InfoHash)).Append("\" ").Append(isSelected).Append('>').Append(WebUtility.HtmlEncode(text)).Append("</option>");
                     }
 
                     sbDropdown.Append("""
@@ -884,7 +883,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     itemDto.PlayAccess = PlayAccess.None;
                     itemDto.LocationType = LocationType.Virtual;
                     itemDto.CanDownload = false;
-                    itemDto.MediaSources = Array.Empty<MediaSourceInfo>();
                     itemDto.Taglines = ["⚠️ No stream chosen - Pick from dropdown to play"];
                 }
                 else

@@ -42,9 +42,10 @@ public sealed partial class TorrentioClient
         "hindi", "tamil", "telugu", "malayalam", "kannada", "marathi", "bengali", "punjabi", "hin",
         "korean", "kor", "japanese", "jap", "chinese", "chi", "mandarin", "cantonese",
         "portuguese", "portugues", "ptbr", "pt-br", "dublado", "legendado",
-        "polish", "polski", "pol",
+        "polish", "polski", "pol", "lektor",
         "turkish", "turkce", "tur",
-        "thai", "vietnamese", "arabic", "hebrew", "czech", "dutch", "swedish", "norwegian", "danish", "finnish", "hungarian", "greek", "ukrainian", "persian", "farsi"
+        "thai", "vietnamese", "arabic", "hebrew", "czech", "cz", "dutch", "nl", "swedish", "norwegian", "danish", "finnish", "hungarian", "hun", "greek", "ukrainian", "ukr", "persian", "farsi",
+        "multi", "dual", "dubbed", "dub"
     };
 
     private static readonly char[] ReleaseDelimiters = [' ', '.', '_', '-', '/', '\\', '[', ']', '(', ')', '{', '}', '+', ',', ':', ';'];
@@ -123,7 +124,7 @@ public sealed partial class TorrentioClient
 
             var streams = response?.Streams ?? [];
             var onlyX264 = PremioPlugin.Instance?.Configuration?.OnlyX264Streams ?? true;
-            return FilterStreams(streams, expectedTitle, expectedYear, onlyX264);
+            return FilterStreams(streams, expectedTitle, null, onlyX264);
         }
         catch (Exception ex)
         {
@@ -214,8 +215,22 @@ public sealed partial class TorrentioClient
             }
         }
 
-        // 4. Fallback to filtered non-foreign streams (or raw streams if all filtered out)
-        return filtered.Count > 0 ? filtered : streams;
+        // 4. Fallback to filtered non-foreign streams
+        if (filtered.Count > 0)
+        {
+            return filtered;
+        }
+
+        var nonForeign = new List<TorrentioStreamResult>();
+        for (var i = 0; i < streams.Count; i++)
+        {
+            if (!ContainsForeignLanguage($"{streams[i].Name} {streams[i].Title}"))
+            {
+                nonForeign.Add(streams[i]);
+            }
+        }
+
+        return nonForeign;
     }
 
     private static bool ContainsForeignLanguage(string text)
