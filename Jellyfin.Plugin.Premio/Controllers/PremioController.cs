@@ -375,9 +375,9 @@ public sealed partial class PremioController : ControllerBase
                     request.Year,
                     new Uri(streamUrl),
                     isTvShow: true,
-                    season: request.Season.Value,
-                    episode: request.Episode.Value,
-                    cancellationToken).ConfigureAwait(false)
+                    seasonNumber: request.Season.Value,
+                    episodeNumber: request.Episode.Value,
+                    cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await _strmService.WriteMediaStrmFileAsync(
                     formattedTitle,
                     new Uri(streamUrl),
@@ -732,10 +732,13 @@ public sealed partial class PremioController : ControllerBase
                 {
                     seriesTitle ??= seriesItem.Name;
                     seriesYear ??= seriesItem.ProductionYear?.ToString(CultureInfo.InvariantCulture);
-                    resolvedImdbId ??= seriesItem.GetProviderId("Imdb");
-                    if (string.IsNullOrWhiteSpace(resolvedImdbId) && int.TryParse(seriesItem.GetProviderId("Tmdb"), out var tmdbId))
+                    if (seriesItem.ProviderIds is not null)
                     {
-                        resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                        seriesItem.ProviderIds.TryGetValue("Imdb", out resolvedImdbId);
+                        if (string.IsNullOrWhiteSpace(resolvedImdbId) && seriesItem.ProviderIds.TryGetValue("Tmdb", out var tmdbIdStr) && int.TryParse(tmdbIdStr, out var tmdbId))
+                        {
+                            resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                        }
                     }
 
                     var query = new InternalItemsQuery
@@ -760,7 +763,17 @@ public sealed partial class PremioController : ControllerBase
             if (string.IsNullOrWhiteSpace(resolvedImdbId))
             {
                 var searchResults = await _tmdbClient.SearchMultiAsync(seriesTitle, cancellationToken).ConfigureAwait(false);
-                var match = searchResults.FirstOrDefault(r => string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)) ?? searchResults.FirstOrDefault();
+                TmdbItem? match = null;
+                for (var k = 0; k < searchResults.Count; k++)
+                {
+                    if (string.Equals(searchResults[k].MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+                    {
+                        match = searchResults[k];
+                        break;
+                    }
+                }
+
+                match ??= searchResults.Count > 0 ? searchResults[0] : null;
                 if (match is not null)
                 {
                     resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", match.Id, cancellationToken).ConfigureAwait(false);
@@ -799,7 +812,7 @@ public sealed partial class PremioController : ControllerBase
                 var sNum = group.Key;
                 var isOpen = sNum == focusedSeason ? "open" : string.Empty;
 
-                sbEpisodes.Append($"""
+                sbEpisodes.Append(CultureInfo.InvariantCulture, $"""
                     <details class="season-section" {isOpen}>
                         <summary class="season-header">Season {sNum} <span class="badge">{group.Count()} Episodes</span></summary>
                         <div class="episodes-list">
@@ -812,7 +825,7 @@ public sealed partial class PremioController : ControllerBase
                     var epCode = $"S{ep.Season:D2}E{ep.Episode:D2}";
                     var safeEpName = WebUtility.HtmlEncode(ep.Name);
 
-                    sbEpisodes.Append($"""
+                    sbEpisodes.Append(CultureInfo.InvariantCulture, $"""
                             <div class="episode-card" id="card-{ep.Season}-{ep.Episode}">
                                 <div class="ep-row">
                                     <span class="ep-badge">{epCode}</span>
