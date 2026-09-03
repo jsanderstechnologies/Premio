@@ -898,6 +898,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Direct stream resolution must not crash the filter.")]
     [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for hash extraction.")]
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File path is retrieved from trusted library manager BaseItem.")]
     private async Task<string?> ResolveDirectStreamUrlAsync(
         ActionExecutingContext context,
         TmdbItem item,

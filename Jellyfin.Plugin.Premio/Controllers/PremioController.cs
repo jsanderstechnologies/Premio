@@ -5,14 +5,17 @@ using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Mime;
+using System.IO;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using Jellyfin.Plugin.Premio.Services;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -92,6 +95,7 @@ public sealed partial class PremioController : ControllerBase
     [AllowAnonymous]
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Stream resolution errors return appropriate HTTP status.")]
     [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for hash extraction.")]
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File path is retrieved from trusted library manager BaseItem.")]
     public async Task<IActionResult> Stream(
         [FromRoute] Guid? itemId,
         [FromQuery] string? mediaSourceId,
@@ -142,11 +146,11 @@ public sealed partial class PremioController : ControllerBase
                 }
             }
 
-            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
+            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && System.IO.File.Exists(libItem.Path))
             {
                 try
                 {
-                    var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
+                    var fileContent = await System.IO.File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
                     var trimmed = fileContent?.Trim() ?? string.Empty;
                     if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                     {
@@ -440,9 +444,9 @@ public sealed partial class PremioController : ControllerBase
             string? strmPath = null;
 
             // 1. If itemId is provided, write directly to Jellyfin's exact episode item path
-            if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var itemGuid))
+            if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var targetItemGuid))
             {
-                var libraryItem = _libraryManager.GetItemById(itemGuid);
+                var libraryItem = _libraryManager.GetItemById(targetItemGuid);
                 if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
                 {
                     await System.IO.File.WriteAllTextAsync(libraryItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
