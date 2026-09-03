@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 /// <summary>
 /// HTTP client for retrieving TV show seasons and episode metadata from TheTVDB v4 API.
 /// </summary>
-public sealed partial class TvdbClient
+public sealed partial class TvdbClient : IDisposable
 {
     private readonly HttpClient _http;
     private readonly ILogger<TvdbClient> _logger;
@@ -132,10 +132,16 @@ public sealed partial class TvdbClient
                 if (res.IsSuccessStatusCode)
                 {
                     var remoteRes = await res.Content.ReadFromJsonAsync<TvdbRemoteIdResponse>(cancellationToken: cancellationToken).ConfigureAwait(false);
-                    var matched = remoteRes?.Data?.FirstOrDefault(d => d.Series is not null && d.Series.Id > 0);
-                    if (matched?.Series is not null)
+                    if (remoteRes?.Data is { Count: > 0 } remoteList)
                     {
-                        tvdbSeriesId = matched.Series.Id;
+                        for (var i = 0; i < remoteList.Count; i++)
+                        {
+                            if (remoteList[i].Series is { Id: > 0 } matchedSeries)
+                            {
+                                tvdbSeriesId = matchedSeries.Id;
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -150,10 +156,13 @@ public sealed partial class TvdbClient
                 if (res.IsSuccessStatusCode)
                 {
                     var searchRes = await res.Content.ReadFromJsonAsync<TvdbSearchResponse>(cancellationToken: cancellationToken).ConfigureAwait(false);
-                    var firstResult = searchRes?.Data?.FirstOrDefault();
-                    if (firstResult is not null && int.TryParse(firstResult.TvdbId, out var parsedId) && parsedId > 0)
+                    if (searchRes?.Data is { Count: > 0 } searchList)
                     {
-                        tvdbSeriesId = parsedId;
+                        var firstResult = searchList[0];
+                        if (firstResult is not null && int.TryParse(firstResult.TvdbId, out var parsedId) && parsedId > 0)
+                        {
+                            tvdbSeriesId = parsedId;
+                        }
                     }
                 }
             }
@@ -208,6 +217,12 @@ public sealed partial class TvdbClient
             LogTvdbLookupFailed(_logger, imdbId ?? title ?? "unknown", ex.Message);
             return [];
         }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _authLock.Dispose();
     }
 
     // -------------------------------------------------------------------------
