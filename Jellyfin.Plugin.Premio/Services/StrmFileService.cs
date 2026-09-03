@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Configuration;
+using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
