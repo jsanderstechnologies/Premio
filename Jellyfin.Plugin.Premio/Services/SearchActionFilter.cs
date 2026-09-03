@@ -512,7 +512,13 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             var mediaSources = new List<MediaSourceInfo>();
 
-            // If item already exists in library with a current stream, put "Current: ..." as the first option
+            var defaultStreams = new[]
+            {
+                new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
+                new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
+            };
+
+            // If item already exists in library with a current stream, update its properties for browser DirectPlay
             if (itemDto.MediaSources is not null && itemDto.MediaSources.Length > 0)
             {
                 foreach (var existing in itemDto.MediaSources)
@@ -524,6 +530,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                             : (string.IsNullOrWhiteSpace(existing.Name) ? "Current: Saved Stream" : existing.Name);
 
                         existing.Name = updatedName;
+                        existing.Container = "mp4";
+                        existing.SupportsDirectPlay = true;
+                        existing.SupportsDirectStream = true;
+                        existing.SupportsTranscoding = true;
+                        existing.Protocol = MediaProtocol.Http;
+                        if (existing.MediaStreams is null || existing.MediaStreams.Count == 0)
+                        {
+                            existing.MediaStreams = defaultStreams.ToList();
+                        }
                         mediaSources.Add(existing);
                     }
                 }
@@ -531,32 +546,43 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             if (mediaSources.Count == 0)
             {
+                var defaultStreamGuid = GenerateDeterministicGuid($"select_stream:{itemDto.Id}");
+                var syntheticItem = new TmdbItem
+                {
+                    Id = 0,
+                    Title = itemDto.Name,
+                    MediaType = isTv ? "tv" : "movie",
+                    ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
+                };
+                PremioMetadataCache.Register(defaultStreamGuid, syntheticItem);
+                var defaultStreamId = defaultStreamGuid.ToString("N");
+
                 mediaSources.Add(new MediaSourceInfo
                 {
-                    Id = "select_stream",
+                    Id = defaultStreamId,
                     Name = "Select a Stream",
+                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={defaultStreamId}",
+                    DirectStreamUrl = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={defaultStreamId}",
+                    Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
+                    Container = "mp4",
+                    VideoType = VideoType.VideoFile,
                     IsRemote = true,
-                    SupportsDirectPlay = false,
-                    SupportsDirectStream = false,
-                    SupportsTranscoding = false
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = true,
+                    MediaStreams = defaultStreams.ToList()
                 });
             }
 
-            var syntheticItem = new TmdbItem
+            var syntheticItemForStreams = new TmdbItem
             {
                 Id = 0,
                 Title = itemDto.Name,
                 MediaType = isTv ? "tv" : "movie",
                 ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
             };
-            PremioMetadataCache.Register(itemDto.Id, syntheticItem);
-
-            var defaultStreams = new[]
-            {
-                new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
-                new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
-            };
+            PremioMetadataCache.Register(itemDto.Id, syntheticItemForStreams);
 
             foreach (var stream in streams)
             {
@@ -564,7 +590,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 var label = $"{stream.CleanReleaseName}{sizeStr}";
                 var rawHash = stream.InfoHash ?? string.Empty;
                 var streamGuid = GenerateDeterministicGuid($"stream:{itemDto.Id}:{rawHash}");
-                PremioMetadataCache.Register(streamGuid, syntheticItem);
+                PremioMetadataCache.Register(streamGuid, syntheticItemForStreams);
                 if (!string.IsNullOrWhiteSpace(rawHash))
                 {
                     PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
@@ -577,6 +603,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Id = streamId,
                     Name = label,
                     Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
+                    DirectStreamUrl = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
+                    Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = "mp4",
                     VideoType = VideoType.VideoFile,
@@ -588,6 +616,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 });
             }
 
+            itemDto.Container = "mp4";
+            itemDto.MediaStreams = defaultStreams;
             itemDto.MediaSources = mediaSources.ToArray();
         }
         catch (Exception ex)
