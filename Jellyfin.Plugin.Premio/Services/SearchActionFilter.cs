@@ -839,14 +839,19 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 if (streams.Count > 0)
                 {
                     var sbDropdown = new StringBuilder();
-                    var safeJsTitle = (searchTitle ?? "Show").Replace("'", "\\'", StringComparison.Ordinal);
-                    var safeJsYear = (itemYear ?? string.Empty).Replace("'", "\\'", StringComparison.Ordinal);
+                    var encodedTitle = WebUtility.HtmlEncode(searchTitle ?? "Show");
+                    var encodedYear = WebUtility.HtmlEncode(itemYear ?? string.Empty);
+                    var seasonStr = seasonNumber.ToString(CultureInfo.InvariantCulture);
+                    var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
 
-                    sbDropdown.Append(CultureInfo.InvariantCulture, $"""
-                        <div class="premio-stream-wrap" onclick="event.stopPropagation();" style="margin: 6px 0 8px 0; padding: 6px 10px; background: rgba(20,20,20,0.85); border: 1px solid #00a4dc; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                            <span style="color: #00a4dc; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Stream:</span>
-                            <select class="emby-select" style="background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font-size: 11px; max-width: 280px; cursor: pointer;" onchange="const val=this.value; if(!val)return; const st=this.nextElementSibling; st.textContent='Saving...'; st.style.color='#f59e0b'; fetch('/Premio/AddStream', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{title:'{safeJsTitle}', year:'{safeJsYear}', isTv:true, season:{seasonNumber}, episode:{episodeNumber}, infoHash:val}})}}).then(r=>r.json()).then(d=>{{if(d.success){{st.textContent='✓ Saved!'; st.style.color='#10b981'; setTimeout(()=>location.reload(), 600);}}else{{st.textContent='Error'; st.style.color='#ef4444';}}}}).catch(e=>{{st.textContent='Error'; st.style.color='#ef4444';}});">
-                        """);
+                    sbDropdown.Append("<div class=\"premio-stream-wrap\" onclick=\"event.stopPropagation();\" style=\"margin: 6px 0 8px 0; padding: 6px 10px; background: rgba(20,20,20,0.85); border: 1px solid #00a4dc; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;\">");
+                    sbDropdown.Append("<span style=\"color: #00a4dc; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;\">Stream:</span>");
+                    sbDropdown.Append("<select class=\"emby-select\" style=\"background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font-size: 11px; max-width: 280px; cursor: pointer;\" ");
+                    sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
+                    sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
+                    sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
+                    sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
+                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var st=s.nextElementSibling;st.textContent='Saving...';st.style.color='#f59e0b';fetch('/Premio/AddStream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:s.dataset.title,year:s.dataset.year,isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d.success){st.textContent='✓ Saved!';st.style.color='#10b981';setTimeout(function(){location.reload();},600);}else{st.textContent='Error';st.style.color='#ef4444';}}).catch(function(){st.textContent='Error';st.style.color='#ef4444';});})(this);\">");
 
                     if (!hasRealChosenStream)
                     {
