@@ -151,6 +151,7 @@ public sealed partial class StrmFileService
     /// <param name="tvDetails">TMDB detailed item with season metadata.</param>
     /// <param name="posterBytes">Optional poster image bytes.</param>
     /// <param name="backdropBytes">Optional backdrop image bytes.</param>
+    /// <param name="torrentioClient">Optional Torrentio client to discover additional or newly aired seasons.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The root directory path of the created show.</returns>
     [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
@@ -161,6 +162,7 @@ public sealed partial class StrmFileService
         TmdbDetailedItem tvDetails,
         byte[]? posterBytes = null,
         byte[]? backdropBytes = null,
+        TorrentioClient? torrentioClient = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -209,6 +211,59 @@ public sealed partial class StrmFileService
         {
             var defaultCount = tvDetails.NumberOfEpisodes ?? 10;
             seasons.Add(new TmdbSeasonSummary { SeasonNumber = 1, EpisodeCount = Math.Max(defaultCount, 1) });
+        }
+
+        // 1. If TMDB indicates more seasons than listed in details.Seasons, add them
+        if (tvDetails.NumberOfSeasons.HasValue && tvDetails.NumberOfSeasons.Value > seasons.Count)
+        {
+            var maxExisting = seasons.Count > 0 ? seasons.Max(s => s.SeasonNumber) : 0;
+            var defaultEpisodes = seasons.Count > 0 ? seasons[^1].EpisodeCount : 8;
+            for (var extra = maxExisting + 1; extra <= tvDetails.NumberOfSeasons.Value; extra++)
+            {
+                seasons.Add(new TmdbSeasonSummary
+                {
+                    SeasonNumber = extra,
+                    EpisodeCount = defaultEpisodes > 0 ? defaultEpisodes : 8,
+                    Name = $"Season {extra:D2}"
+                });
+            }
+        }
+
+        // 2. Probe Torrentio for any newer unannounced/released seasons (e.g. Season 4 when TMDB only has 1-3)
+        if (torrentioClient is not null && !string.IsNullOrWhiteSpace(imdbId))
+        {
+            var probeSeason = seasons.Count > 0 ? seasons.Max(s => s.SeasonNumber) + 1 : 1;
+            while (probeSeason <= 30)
+            {
+                var probeStreams = await torrentioClient.GetSeriesStreamsAsync(imdbId, probeSeason, 1, title, cleanYear, cancellationToken).ConfigureAwait(false);
+                if (probeStreams.Count == 0)
+                {
+                    break;
+                }
+
+                var defaultEpisodes = seasons.Count > 0 ? seasons[^1].EpisodeCount : 8;
+                var estimatedEpisodes = defaultEpisodes > 0 ? defaultEpisodes : 8;
+
+                for (var i = 0; i < probeStreams.Count; i++)
+                {
+                    var streamTitle = probeStreams[i].Title ?? string.Empty;
+                    var match = Regex.Match(streamTitle, @"(?:из|\/|-E|to\s*E)\s*(\d{1,2})", RegexOptions.IgnoreCase);
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out var parsedCount) && parsedCount is >= 1 and <= 50)
+                    {
+                        estimatedEpisodes = Math.Max(estimatedEpisodes, parsedCount);
+                        break;
+                    }
+                }
+
+                seasons.Add(new TmdbSeasonSummary
+                {
+                    SeasonNumber = probeSeason,
+                    EpisodeCount = estimatedEpisodes,
+                    Name = $"Season {probeSeason:D2}"
+                });
+
+                probeSeason++;
+            }
         }
 
         foreach (var season in seasons)

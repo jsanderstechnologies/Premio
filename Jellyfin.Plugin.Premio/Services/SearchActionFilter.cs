@@ -230,6 +230,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                         tvDetails,
                         posterBytes,
                         backdropBytes,
+                        _torrentioClient,
                         cancellationToken);
 
                     context.Result = new ObjectResult(new UserItemDataDto

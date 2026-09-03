@@ -437,6 +437,7 @@ public sealed partial class PremioController : ControllerBase
                 tvDetails,
                 posterBytes,
                 backdropBytes,
+                _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(directoryPath))
@@ -535,6 +536,7 @@ public sealed partial class PremioController : ControllerBase
                 tvDetails,
                 posterBytes,
                 backdropBytes,
+                _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 
             Guid foundSeriesId = Guid.Empty;
