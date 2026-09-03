@@ -78,16 +78,40 @@ public sealed partial class StrmFileService
     /// <param name="episodeNumber">Episode number (default 1 for TV shows).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
-    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
-    public async Task<string?> WriteMediaStrmFileAsync(
+    public Task<string?> WriteMediaStrmFileAsync(
         string title,
         string? year,
         Uri streamUri,
         bool isTvShow = false,
         int seasonNumber = 1,
         int episodeNumber = 1,
-        CancellationToken cancellationToken = default,
-        bool forceOverwrite = true)
+        CancellationToken cancellationToken = default)
+    {
+        return WriteMediaStrmFileAsync(title, year, streamUri, isTvShow, seasonNumber, episodeNumber, true, cancellationToken);
+    }
+
+    /// <summary>
+    /// Writes a .strm file for a media item with explicit overwrite control.
+    /// </summary>
+    /// <param name="title">Item title.</param>
+    /// <param name="year">Release year (e.g. "1987" or "2008").</param>
+    /// <param name="streamUri">Direct stream URI.</param>
+    /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
+    /// <param name="seasonNumber">Season number (default 1 for TV shows).</param>
+    /// <param name="episodeNumber">Episode number (default 1 for TV shows).</param>
+    /// <param name="forceOverwrite">Whether to force overwriting existing .strm files.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
+    public async Task<string?> WriteMediaStrmFileAsync(
+        string title,
+        string? year,
+        Uri streamUri,
+        bool isTvShow,
+        int seasonNumber,
+        int episodeNumber,
+        bool forceOverwrite,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(streamUri);
@@ -445,7 +469,7 @@ public sealed partial class StrmFileService
         bool isTvShow = false,
         CancellationToken cancellationToken = default)
     {
-        return WriteMediaStrmFileAsync(title, null, streamUri, isTvShow, 1, 1, cancellationToken, forceOverwrite: true);
+        return WriteMediaStrmFileAsync(title, null, streamUri, isTvShow, 1, 1, cancellationToken);
     }
 
     /// <summary>

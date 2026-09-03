@@ -254,6 +254,7 @@ public sealed partial class TorrentioClient
         return nonForeign;
     }
 
+    [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Season and episode numbers are integers sanitized by integer formatting.")]
     private static bool MatchesSeasonAndEpisode(string text, int season, int episode)
     {
         // 1. Check standard S01E01, S1E1, S01.E01, S01_E01, S01 - E01
