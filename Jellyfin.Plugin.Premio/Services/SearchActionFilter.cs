@@ -562,7 +562,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Id = defaultStreamId,
                     Name = "Select a Stream",
                     Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={defaultStreamId}",
-                    DirectStreamUrl = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={defaultStreamId}",
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = "mp4",
@@ -603,7 +602,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Id = streamId,
                     Name = label,
                     Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
-                    DirectStreamUrl = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = "mp4",
@@ -760,7 +758,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     Id = mediaSourceId,
                     Path = streamUrl,
-                    DirectStreamUrl = streamUrl,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = "mp4",
