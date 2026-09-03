@@ -38,6 +38,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private readonly TmdbClient _tmdbClient;
+    private readonly TvdbClient _tvdbClient;
+    private readonly ImdbClient _imdbClient;
     private readonly TorrentioClient _torrentioClient;
     private readonly PremiumizeClient _premiumizeClient;
     private readonly StrmFileService _strmService;
@@ -49,6 +51,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// Initialises a new instance of <see cref="SearchActionFilter"/>.
     /// </summary>
     /// <param name="tmdbClient">Injected TMDB client.</param>
+    /// <param name="tvdbClient">Injected TheTVDB client.</param>
+    /// <param name="imdbClient">Injected IMDb / Cinemeta client.</param>
     /// <param name="torrentioClient">Injected Torrentio client.</param>
     /// <param name="premiumizeClient">Injected Premiumize client.</param>
     /// <param name="strmService">Injected STRM file service.</param>
@@ -57,6 +61,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     /// <param name="logger">Injected logger.</param>
     public SearchActionFilter(
         TmdbClient tmdbClient,
+        TvdbClient tvdbClient,
+        ImdbClient imdbClient,
         TorrentioClient torrentioClient,
         PremiumizeClient premiumizeClient,
         StrmFileService strmService,
@@ -65,6 +71,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         ILogger<SearchActionFilter> logger)
     {
         _tmdbClient = tmdbClient;
+        _tvdbClient = tvdbClient;
+        _imdbClient = imdbClient;
         _torrentioClient = torrentioClient;
         _premiumizeClient = premiumizeClient;
         _strmService = strmService;
@@ -231,6 +239,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                         posterBytes,
                         backdropBytes,
                         _tmdbClient,
+                        _tvdbClient,
+                        _imdbClient,
                         _torrentioClient,
                         cancellationToken);
 

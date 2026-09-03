@@ -24,6 +24,12 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string TmdbApiKey { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Gets or sets the optional personal TheTVDB API key (v4 auth).
+    /// Used as a fallback metadata provider for TV shows, seasons, and episodes.
+    /// </summary>
+    public string TvdbApiKey { get; set; } = string.Empty;
+
     // -------------------------------------------------------------------------
     // Network / HTTP settings
     // -------------------------------------------------------------------------

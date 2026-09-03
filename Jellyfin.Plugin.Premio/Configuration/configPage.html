@@ -76,6 +76,13 @@
                             <div class="fieldDescription">Personal TMDB (v3) API key. Leave blank to use the built-in key. (<a href="https://www.themoviedb.org/settings/api" target="_blank" class="button-link">Get Key</a>)</div>
                         </div>
 
+                        <!-- TheTVDB API Key -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">TheTVDB API Key (Optional)</label>
+                            <input id="txtTvdbApiKey" name="txtTvdbApiKey" type="password" is="emby-input" />
+                            <div class="fieldDescription">Personal TheTVDB (v4) API key used as a fallback for TV shows, seasons, and episodes. (<a href="https://thetvdb.com/dashboard/account/api" target="_blank" class="button-link">Get Key</a>)</div>
+                        </div>
+
                         <!-- API Base URL -->
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtApiBaseUrl">API Base URL</label>
@@ -120,6 +127,7 @@
                         document.querySelector('#chkOverwrite').checked = config.OverwriteExistingStrmFiles !== false;
                         document.querySelector('#chkOnlyX264').checked = config.OnlyX264Streams !== false;
                         document.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
+                        document.querySelector('#txtTvdbApiKey').value = config.TvdbApiKey || '';
                         document.querySelector('#txtApiBaseUrl').value = config.ApiBaseUrl || 'https://www.premiumize.me/api';
                         document.querySelector('#txtMaxSearchResults').value = config.MaxSearchResults || 50;
                         document.querySelector('#txtRequestTimeout').value = config.RequestTimeoutSeconds || 30;
@@ -141,6 +149,7 @@
                         config.OverwriteExistingStrmFiles = document.querySelector('#chkOverwrite').checked;
                         config.OnlyX264Streams = document.querySelector('#chkOnlyX264').checked;
                         config.TmdbApiKey = document.querySelector('#txtTmdbApiKey').value;
+                        config.TvdbApiKey = document.querySelector('#txtTvdbApiKey').value;
                         config.ApiBaseUrl = document.querySelector('#txtApiBaseUrl').value || 'https://www.premiumize.me/api';
                         config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10) || 50;
                         config.RequestTimeoutSeconds = parseInt(document.querySelector('#txtRequestTimeout').value, 10) || 30;

@@ -27,6 +27,8 @@ namespace Jellyfin.Plugin.Premio.Controllers;
 public sealed partial class PremioController : ControllerBase
 {
     private readonly TmdbClient _tmdbClient;
+    private readonly TvdbClient _tvdbClient;
+    private readonly ImdbClient _imdbClient;
     private readonly TorrentioClient _torrentioClient;
     private readonly PremiumizeClient _premiumizeClient;
     private readonly StrmFileService _strmService;
@@ -37,6 +39,8 @@ public sealed partial class PremioController : ControllerBase
     /// Initialises a new instance of <see cref="PremioController"/>.
     /// </summary>
     /// <param name="tmdbClient">TMDB HTTP client.</param>
+    /// <param name="tvdbClient">TheTVDB HTTP client.</param>
+    /// <param name="imdbClient">IMDb / Cinemeta HTTP client.</param>
     /// <param name="torrentioClient">Torrentio HTTP client.</param>
     /// <param name="premiumizeClient">Premiumize HTTP client.</param>
     /// <param name="strmService">STRM file service.</param>
@@ -44,6 +48,8 @@ public sealed partial class PremioController : ControllerBase
     /// <param name="logger">Logger.</param>
     public PremioController(
         TmdbClient tmdbClient,
+        TvdbClient tvdbClient,
+        ImdbClient imdbClient,
         TorrentioClient torrentioClient,
         PremiumizeClient premiumizeClient,
         StrmFileService strmService,
@@ -51,6 +57,8 @@ public sealed partial class PremioController : ControllerBase
         ILogger<PremioController> logger)
     {
         _tmdbClient = tmdbClient;
+        _tvdbClient = tvdbClient;
+        _imdbClient = imdbClient;
         _torrentioClient = torrentioClient;
         _premiumizeClient = premiumizeClient;
         _strmService = strmService;
@@ -438,6 +446,8 @@ public sealed partial class PremioController : ControllerBase
                 posterBytes,
                 backdropBytes,
                 _tmdbClient,
+                _tvdbClient,
+                _imdbClient,
                 _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 
@@ -538,6 +548,8 @@ public sealed partial class PremioController : ControllerBase
                 posterBytes,
                 backdropBytes,
                 _tmdbClient,
+                _tvdbClient,
+                _imdbClient,
                 _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 

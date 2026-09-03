@@ -152,6 +152,8 @@ public sealed partial class StrmFileService
     /// <param name="posterBytes">Optional poster image bytes.</param>
     /// <param name="backdropBytes">Optional backdrop image bytes.</param>
     /// <param name="tmdbClient">Optional TMDB client to retrieve season details and episodes.</param>
+    /// <param name="tvdbClient">Optional TheTVDB client for fallback season/episode metadata.</param>
+    /// <param name="imdbClient">Optional IMDb / Cinemeta client for fallback season/episode metadata.</param>
     /// <param name="torrentioClient">Optional Torrentio client to discover additional or newly aired seasons.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The root directory path of the created show.</returns>
@@ -164,6 +166,8 @@ public sealed partial class StrmFileService
         byte[]? posterBytes = null,
         byte[]? backdropBytes = null,
         TmdbClient? tmdbClient = null,
+        TvdbClient? tvdbClient = null,
+        ImdbClient? imdbClient = null,
         TorrentioClient? torrentioClient = null,
         CancellationToken cancellationToken = default)
     {
@@ -231,7 +235,85 @@ public sealed partial class StrmFileService
             }
         }
 
-        // 2. Discover next seasons directly from TMDB (/tv/{id}/season/{s}) or Torrentio
+        // 2. Query IMDb (Cinemeta) fallback for complete season/episode list
+        if (imdbClient is not null && !string.IsNullOrWhiteSpace(imdbId))
+        {
+            var imdbSeasons = await imdbClient.GetSeriesSeasonsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+            foreach (var imdbSeason in imdbSeasons)
+            {
+                var existing = seasons.Find(s => s.SeasonNumber == imdbSeason.SeasonNumber);
+                if (existing is null)
+                {
+                    seasons.Add(imdbSeason);
+                }
+                else if (existing.EpisodeCount < imdbSeason.EpisodeCount)
+                {
+                    var idx = seasons.IndexOf(existing);
+                    seasons[idx] = new TmdbSeasonSummary
+                    {
+                        Id = existing.Id,
+                        SeasonNumber = existing.SeasonNumber,
+                        EpisodeCount = imdbSeason.EpisodeCount,
+                        Name = existing.Name ?? imdbSeason.Name,
+                        Overview = existing.Overview,
+                        PosterPath = existing.PosterPath
+                    };
+                }
+            }
+        }
+
+        // 3. Query TheTVDB (v4) fallback for complete season/episode list
+        if (tvdbClient is not null)
+        {
+            var tvdbSeasons = await tvdbClient.GetSeriesSeasonsAsync(imdbId, title, cancellationToken).ConfigureAwait(false);
+            foreach (var tvdbSeason in tvdbSeasons)
+            {
+                var existing = seasons.Find(s => s.SeasonNumber == tvdbSeason.SeasonNumber);
+                if (existing is null)
+                {
+                    seasons.Add(tvdbSeason);
+                }
+                else if (existing.EpisodeCount < tvdbSeason.EpisodeCount)
+                {
+                    var idx = seasons.IndexOf(existing);
+                    seasons[idx] = new TmdbSeasonSummary
+                    {
+                        Id = existing.Id,
+                        SeasonNumber = existing.SeasonNumber,
+                        EpisodeCount = tvdbSeason.EpisodeCount,
+                        Name = existing.Name ?? tvdbSeason.Name,
+                        Overview = existing.Overview,
+                        PosterPath = existing.PosterPath
+                    };
+                }
+            }
+        }
+
+        // 4. Query TMDB season endpoints for any missing or single-episode seasons
+        if (tmdbClient is not null && tvDetails.Id > 0)
+        {
+            for (var i = 0; i < seasons.Count; i++)
+            {
+                if (seasons[i].EpisodeCount <= 1)
+                {
+                    var details = await tmdbClient.GetSeasonDetailsAsync(tvDetails.Id, seasons[i].SeasonNumber, cancellationToken).ConfigureAwait(false);
+                    if (details is not null && details.Episodes.Count > seasons[i].EpisodeCount)
+                    {
+                        seasons[i] = new TmdbSeasonSummary
+                        {
+                            Id = seasons[i].Id,
+                            SeasonNumber = seasons[i].SeasonNumber,
+                            EpisodeCount = details.Episodes.Count,
+                            Name = seasons[i].Name,
+                            Overview = seasons[i].Overview,
+                            PosterPath = seasons[i].PosterPath
+                        };
+                    }
+                }
+            }
+        }
+
+        // 5. Discover next seasons directly from TMDB (/tv/{id}/season/{s}) or Torrentio
         var probeSeason = seasons.Count > 0 ? seasons.Max(s => s.SeasonNumber) + 1 : 1;
         while (probeSeason <= 30)
         {
@@ -288,29 +370,7 @@ public sealed partial class StrmFileService
             break;
         }
 
-        // 3. For any season with episode_count <= 1, query TMDB season endpoint to get exact episode count
-        if (tmdbClient is not null && tvDetails.Id > 0)
-        {
-            for (var i = 0; i < seasons.Count; i++)
-            {
-                if (seasons[i].EpisodeCount <= 1)
-                {
-                    var details = await tmdbClient.GetSeasonDetailsAsync(tvDetails.Id, seasons[i].SeasonNumber, cancellationToken).ConfigureAwait(false);
-                    if (details is not null && details.Episodes.Count > seasons[i].EpisodeCount)
-                    {
-                        seasons[i] = new TmdbSeasonSummary
-                        {
-                            Id = seasons[i].Id,
-                            SeasonNumber = seasons[i].SeasonNumber,
-                            EpisodeCount = details.Episodes.Count,
-                            Name = seasons[i].Name,
-                            Overview = seasons[i].Overview,
-                            PosterPath = seasons[i].PosterPath
-                        };
-                    }
-                }
-            }
-        }
+        seasons.Sort((a, b) => a.SeasonNumber.CompareTo(b.SeasonNumber));
 
         foreach (var season in seasons)
         {
