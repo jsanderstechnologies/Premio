@@ -33,27 +33,6 @@ public sealed partial class TorrentioClient
         _http.Timeout = TimeSpan.FromSeconds(15);
     }
 
-    private static readonly HashSet<string> ForeignLanguageTokens = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "french", "truefrench", "vostfr", "subfrench", "vf", "vff", "vfq",
-        "german", "deutsch", "ger",
-        "italian", "ita",
-        "spanish", "espanol", "castellano", "latino", "spa", "esp",
-        "russian", "rus",
-        "hindi", "tamil", "telugu", "malayalam", "kannada", "marathi", "bengali", "punjabi", "hin",
-        "korean", "kor", "japanese", "jap", "chinese", "chi", "mandarin", "cantonese",
-        "portuguese", "portugues", "ptbr", "pt-br", "dublado", "legendado",
-        "polish", "polski", "pol", "lektor",
-        "turkish", "turkce", "tur",
-        "thai", "vietnamese", "arabic", "hebrew", "czech", "cz", "dutch", "nl", "swedish", "norwegian", "danish", "finnish", "hungarian", "hun", "greek", "ukrainian", "ukr", "persian", "farsi",
-        "multi", "dual", "dubbed", "dub"
-    };
-
-    private static readonly string[] ForeignFlagEmojis =
-    [
-        "🇫🇷", "🇮🇹", "🇩🇪", "🇪🇸", "🇷🇺", "🇮🇳", "🇯🇵", "🇰🇷", "🇨🇳", "🇧🇷", "🇵🇹", "🇵🇱", "🇹🇷", "🇸🇦", "🇺🇦", "🇨🇿", "🇳🇱"
-    ];
-
     private static readonly char[] ReleaseDelimiters = [' ', '.', '_', '-', '/', '\\', '[', ']', '(', ')', '{', '}', '+', ',', ':', ';'];
 
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
@@ -288,20 +267,54 @@ public sealed partial class TorrentioClient
         return false;
     }
 
-    private static bool ContainsForeignLanguage(string text)
+    /// <summary>
+    /// Determines whether the given text contains characters from a foreign alphabet
+    /// (e.g. Cyrillic, Chinese, Japanese, Korean, Arabic, Hebrew, Greek, Thai, or Indic scripts).
+    /// </summary>
+    /// <param name="text">Text to inspect.</param>
+    /// <returns><c>true</c> if foreign alphabet characters are present; otherwise, <c>false</c>.</returns>
+    public static bool ContainsForeignAlphabet(string text)
     {
-        for (var i = 0; i < ForeignFlagEmojis.Length; i++)
+        if (string.IsNullOrEmpty(text))
         {
-            if (text.Contains(ForeignFlagEmojis[i], StringComparison.Ordinal))
-            {
-                return true;
-            }
+            return false;
         }
 
-        var tokens = text.Split(ReleaseDelimiters, StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < tokens.Length; i++)
+        for (var i = 0; i < text.Length; i++)
         {
-            if (ForeignLanguageTokens.Contains(tokens[i]))
+            var ch = text[i];
+
+            // Basic Latin, Latin-1 Supplement, Latin Extended (English, standard Latin accents)
+            if (ch <= 0x024F)
+            {
+                continue;
+            }
+
+            // Foreign non-Latin alphabet Unicode ranges:
+            // 0x0370 - 0x052F: Greek, Coptic, and Cyrillic (Russian, Ukrainian, etc.)
+            // 0x0590 - 0x05FF: Hebrew
+            // 0x0600 - 0x08FF: Arabic
+            // 0x0900 - 0x0DFF: Indic scripts (Devanagari/Hindi, Bengali, Tamil, Telugu, etc.)
+            // 0x0E00 - 0x0E7F: Thai
+            // 0x1100 - 0x11FF: Hangul Jamo
+            // 0x2E80 - 0x2EFF: CJK Radicals
+            // 0x3040 - 0x30FF: Hiragana and Katakana (Japanese)
+            // 0x3130 - 0x318F: Hangul Compatibility Jamo
+            // 0x3400 - 0x4DBF: CJK Extension A
+            // 0x4E00 - 0x9FFF: CJK Unified Ideographs (Chinese, Japanese Kanji, Korean Hanja)
+            // 0xAC00 - 0xD7AF: Hangul Syllables (Korean)
+            if ((ch >= 0x0370 && ch <= 0x052F) ||
+                (ch >= 0x0590 && ch <= 0x05FF) ||
+                (ch >= 0x0600 && ch <= 0x08FF) ||
+                (ch >= 0x0900 && ch <= 0x0DFF) ||
+                (ch >= 0x0E00 && ch <= 0x0E7F) ||
+                (ch >= 0x1100 && ch <= 0x11FF) ||
+                (ch >= 0x2E80 && ch <= 0x2EFF) ||
+                (ch >= 0x3040 && ch <= 0x30FF) ||
+                (ch >= 0x3130 && ch <= 0x318F) ||
+                (ch >= 0x3400 && ch <= 0x4DBF) ||
+                (ch >= 0x4E00 && ch <= 0x9FFF) ||
+                (ch >= 0xAC00 && ch <= 0xD7AF))
             {
                 return true;
             }
@@ -309,6 +322,8 @@ public sealed partial class TorrentioClient
 
         return false;
     }
+
+    private static bool ContainsForeignLanguage(string text) => ContainsForeignAlphabet(text);
 
     private static bool ContainsYear(string text, string year)
     {
