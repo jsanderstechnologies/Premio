@@ -413,10 +413,10 @@ public sealed partial class PremioController : ControllerBase
         try
         {
             var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!.OriginalString;
-            _ = _premiumizeClient.CreateTransferAsync(src, cancellationToken);
+            await _premiumizeClient.CreateTransferAsync(src, cancellationToken).ConfigureAwait(false);
 
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
-            var directStreamUrl = ResolvePlayableStreamUrl(directDl);
+            var directStreamUrl = ResolvePlayableStreamUrl(directDl, request.Season, request.Episode);
 
             var host = Request.Host.HasValue ? Request.Host.Value : "127.0.0.1:8096";
             var scheme = Request.Scheme ?? "http";
@@ -1149,7 +1149,8 @@ public sealed partial class PremioController : ControllerBase
         ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"
     };
 
-    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl)
+    [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for episode matching.")]
+    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl, int? season = null, int? episode = null)
     {
         if (directDl.Content is not null && directDl.Content.Count > 0)
         {
@@ -1161,6 +1162,18 @@ public sealed partial class PremioController : ControllerBase
                 })
                 .OrderByDescending(f => f.Size)
                 .ToList();
+
+            if (season.HasValue && episode.HasValue)
+            {
+                var sNum = season.Value;
+                var epNum = episode.Value;
+                var epPattern = $@"[sS]0*{sNum}[eE]0*{epNum}(?:[^0-9]|$)";
+                var matchedEp = videoFiles.FirstOrDefault(f => Regex.IsMatch(f.Path ?? string.Empty, epPattern, RegexOptions.IgnoreCase));
+                if (matchedEp is not null)
+                {
+                    return matchedEp.StreamLink ?? matchedEp.Link;
+                }
+            }
 
             if (videoFiles.Count > 0)
             {

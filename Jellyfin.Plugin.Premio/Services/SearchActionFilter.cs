@@ -814,6 +814,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
                     var itemIdStr = itemDto.Id != Guid.Empty ? itemDto.Id.ToString() : string.Empty;
 
+                    // If no stream chosen yet, hide poster play button immediately
+                    if (!hasRealChosenStream)
+                    {
+                        sbDropdown.Append("""<img src="data:," onerror="var c=this.closest('.card, .listItem, .detailRibbon, .itemDetailPage')||this.parentElement;if(c){var b=c.querySelectorAll('button[data-action=\'play\'], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');b.forEach(function(x){x.style.display='none';x.disabled=true;x.style.pointerEvents='none';});}this.remove();" style="display:none;" />""");
+                    }
+
                     // Match exact Jellyfin Version droplist style
                     sbDropdown.Append("<div class=\"selectContainer selectSourceContainer focusable\" onclick=\"event.stopPropagation();\" style=\"margin: 10px 0 8px 0; width: 100%; max-width: 520px;\">");
                     sbDropdown.Append("<label class=\"selectLabel selectLabel-focused\" style=\"display: block; font-size: 12px; font-weight: 600; color: #00a4dc; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;\">Version</label>");
@@ -824,7 +830,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
                     sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
                     sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
-                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;if(st){st.textContent='Saving...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}fetch('/Premio/AddStream',{method:'POST',headers:h,body:JSON.stringify({itemId:s.dataset.itemid||'',title:s.dataset.title||'',year:s.dataset.year||'',isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Saved to .strm!';st.style.color='#10b981';}setTimeout(function(){location.reload();},700);}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){if(st){st.textContent='Error';st.style.color='#ef4444';}});})(this);\">");
+                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;var card=s.closest('.card, .listItem, .detailRibbon, .itemDetailPage')||document;var pBtns=card.querySelectorAll('button[data-action=\'play\'], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');pBtns.forEach(function(b){b.style.display='none';b.disabled=true;b.style.pointerEvents='none';});if(st){st.textContent='Sending to Premiumize...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}fetch('/Premio/AddStream',{method:'POST',headers:h,body:JSON.stringify({itemId:s.dataset.itemid||'',title:s.dataset.title||'',year:s.dataset.year||'',isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Stream ready! Saved to .strm';st.style.color='#10b981';}pBtns.forEach(function(b){b.style.display='';b.disabled=false;b.style.pointerEvents='auto';});setTimeout(function(){location.reload();},1200);}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){if(st){st.textContent='Error';st.style.color='#ef4444';}});})(this);\">");
 
                     if (!hasRealChosenStream)
                     {
@@ -1028,7 +1034,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             // 1. Send magnet to Premiumize Transfer manager & DirectDL
             await _premiumizeClient.CreateTransferAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(mediaSourceId, cancellationToken).ConfigureAwait(false);
-            var streamUrl = ResolvePlayableStreamUrl(directDl);
+            var streamUrl = ResolvePlayableStreamUrl(directDl, isTv ? season : null, isTv ? episode : null);
 
             if (string.IsNullOrWhiteSpace(streamUrl))
             {
@@ -1561,7 +1567,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"
     };
 
-    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl)
+    [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for episode matching.")]
+    private static string? ResolvePlayableStreamUrl(PremiumizeDirectDlResponse directDl, int? season = null, int? episode = null)
     {
         if (directDl.Content is not null && directDl.Content.Count > 0)
         {
@@ -1574,6 +1581,18 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 })
                 .OrderByDescending(f => f.Size)
                 .ToList();
+
+            if (season.HasValue && episode.HasValue)
+            {
+                var sNum = season.Value;
+                var epNum = episode.Value;
+                var epPattern = $@"[sS]0*{sNum}[eE]0*{epNum}(?:[^0-9]|$)";
+                var matchedEp = videoFiles.FirstOrDefault(f => Regex.IsMatch(f.Path ?? string.Empty, epPattern, RegexOptions.IgnoreCase));
+                if (matchedEp is not null)
+                {
+                    return matchedEp.StreamLink ?? matchedEp.Link;
+                }
+            }
 
             if (videoFiles.Count > 0)
             {
