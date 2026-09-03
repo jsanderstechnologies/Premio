@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Library;
 using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Querying;
@@ -838,14 +839,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 if (!hasRealChosenStream)
                 {
                     itemDto.PlayAccess = PlayAccess.None;
-                    itemDto.CanPlay = false;
+                    itemDto.LocationType = LocationType.Virtual;
                     itemDto.CanDownload = false;
+                    itemDto.MediaSources = Array.Empty<MediaSourceInfo>();
                     itemDto.Taglines = ["⚠️ No stream chosen - Click (i) to select a stream"];
                 }
                 else
                 {
                     itemDto.PlayAccess = PlayAccess.Full;
-                    itemDto.CanPlay = true;
+                    itemDto.LocationType = LocationType.FileSystem;
                     itemDto.CanDownload = true;
                 }
             }
