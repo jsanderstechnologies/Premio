@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace Jellyfin.Plugin.Premio.Services;
 
@@ -44,8 +45,13 @@ public sealed class PremioWebInjectionMiddleware
             return;
         }
 
-        var originalBodyStream = context.Response.Body;
+        // Strip caching validation headers so static file middleware cannot return 304 Not Modified
+        context.Request.Headers.Remove("If-None-Match");
+        context.Request.Headers.Remove("If-Modified-Since");
+
+        var originalBodyFeature = context.Features.Get<IHttpResponseBodyFeature>();
         using var newBodyStream = new MemoryStream();
+        context.Features.Set<IHttpResponseBodyFeature>(new StreamResponseBodyFeature(newBodyStream));
         context.Response.Body = newBodyStream;
 
         try
@@ -56,7 +62,7 @@ public sealed class PremioWebInjectionMiddleware
             var contentType = context.Response.ContentType ?? string.Empty;
 
             if (context.Response.StatusCode == StatusCodes.Status200OK &&
-                contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+                (string.IsNullOrWhiteSpace(contentType) || contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase)))
             {
                 using var reader = new StreamReader(newBodyStream, Encoding.UTF8, leaveOpen: true);
                 var html = await reader.ReadToEndAsync().ConfigureAwait(false);
@@ -68,17 +74,27 @@ public sealed class PremioWebInjectionMiddleware
                     var modifiedBytes = Encoding.UTF8.GetBytes(html);
                     context.Response.Headers.Remove("ETag");
                     context.Response.Headers.ContentLength = modifiedBytes.Length;
-                    await originalBodyStream.WriteAsync(modifiedBytes, context.RequestAborted).ConfigureAwait(false);
+                    if (originalBodyFeature is not null)
+                    {
+                        await originalBodyFeature.Stream.WriteAsync(modifiedBytes, context.RequestAborted).ConfigureAwait(false);
+                    }
                     return;
                 }
             }
 
             newBodyStream.Seek(0, SeekOrigin.Begin);
-            await newBodyStream.CopyToAsync(originalBodyStream, context.RequestAborted).ConfigureAwait(false);
+            if (originalBodyFeature is not null)
+            {
+                await newBodyStream.CopyToAsync(originalBodyFeature.Stream, context.RequestAborted).ConfigureAwait(false);
+            }
         }
         finally
         {
-            context.Response.Body = originalBodyStream;
+            if (originalBodyFeature is not null)
+            {
+                context.Features.Set<IHttpResponseBodyFeature>(originalBodyFeature);
+                context.Response.Body = originalBodyFeature.Stream;
+            }
         }
     }
 }
