@@ -374,8 +374,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (!string.IsNullOrWhiteSpace(imdbId))
         {
             streams = isTv
-                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
-                : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
+                : await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
         }
 
         // 3. Populate MediaSources (Version dropdown)
@@ -511,9 +511,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
+            var itemYear = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture);
             var streams = isTv
-                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
-                : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, itemDto.Name, itemYear, cancellationToken).ConfigureAwait(false)
+                : await _torrentioClient.GetMovieStreamsAsync(imdbId, itemDto.Name, itemYear, cancellationToken).ConfigureAwait(false);
 
             if (streams.Count == 0)
             {
@@ -672,8 +673,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {

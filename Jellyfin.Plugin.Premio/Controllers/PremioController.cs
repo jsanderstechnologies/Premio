@@ -101,8 +101,8 @@ public sealed partial class PremioController : ControllerBase
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cachedItem?.DisplayTitle, cachedItem?.Year, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cachedItem?.DisplayTitle, cachedItem?.Year, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {
@@ -151,14 +151,11 @@ public sealed partial class PremioController : ControllerBase
                 }
             }
 
-            LogStreamResolved(_logger, title, targetHash, streamUrl);
-
-            // 3. 302 Redirect player to Premiumize CDN stream
             return Redirect(streamUrl);
         }
         catch (Exception ex)
         {
-            LogAddStreamFailed(_logger, targetHash, ex.Message);
+            LogStreamResolutionFailed(_logger, requestedGuid, ex.Message);
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
         }
     }
@@ -222,6 +219,8 @@ public sealed partial class PremioController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<TorrentioStreamResult>>> GetStreams(
         [FromQuery] string type,
         [FromQuery] string imdbId,
+        [FromQuery] string? title = null,
+        [FromQuery] string? year = null,
         [FromQuery] int season = 1,
         [FromQuery] int episode = 1,
         CancellationToken cancellationToken = default)
@@ -233,8 +232,8 @@ public sealed partial class PremioController : ControllerBase
 
         var isTv = string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase);
         var streams = isTv
-            ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, cancellationToken).ConfigureAwait(false)
-            : await _torrentioClient.GetMovieStreamsAsync(imdbId, cancellationToken).ConfigureAwait(false);
+            ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, title, year, cancellationToken).ConfigureAwait(false)
+            : await _torrentioClient.GetMovieStreamsAsync(imdbId, title, year, cancellationToken).ConfigureAwait(false);
 
         if (streams.Count == 0)
         {
