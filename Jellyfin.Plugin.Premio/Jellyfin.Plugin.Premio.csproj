@@ -10,9 +10,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisMode>All</AnalysisMode>
     <LangVersion>latest</LangVersion>
-    <Version>1.1.5.8</Version>
-    <AssemblyVersion>1.1.5.8</AssemblyVersion>
-    <FileVersion>1.1.5.8</FileVersion>
+    <Version>1.1.5.9</Version>
+    <AssemblyVersion>1.1.5.9</AssemblyVersion>
+    <FileVersion>1.1.5.9</FileVersion>
     <Authors>Premio Plugin Authors</Authors>
     <Description>Jellyfin backend search and stream plugin for Premiumize.</Description>
     <Copyright>Copyright © 2026</Copyright>
