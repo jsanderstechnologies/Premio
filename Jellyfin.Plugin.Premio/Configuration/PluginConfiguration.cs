@@ -72,8 +72,14 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     public bool OverwriteExistingStrmFiles { get; set; } = true;
 
     // -------------------------------------------------------------------------
-    // Search settings
+    // Search & Stream Filter settings
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to filter torrent streams to only H.264 / x264 releases.
+    /// Recommended for maximum direct play compatibility across web and low-power devices.
+    /// </summary>
+    public bool OnlyX264Streams { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the maximum number of search results returned per query.

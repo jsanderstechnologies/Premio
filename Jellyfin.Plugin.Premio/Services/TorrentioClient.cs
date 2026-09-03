@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading;
@@ -53,7 +54,18 @@ public sealed partial class TorrentioClient
                 .GetFromJsonAsync<TorrentioResponse>(url, cancellationToken)
                 .ConfigureAwait(false);
 
-            return response?.Streams ?? [];
+            var streams = response?.Streams ?? [];
+            var onlyX264 = PremioPlugin.Instance?.Configuration?.OnlyX264Streams ?? true;
+            if (onlyX264)
+            {
+                var filtered = streams.Where(s => s.IsX264).ToList();
+                if (filtered.Count > 0)
+                {
+                    return filtered;
+                }
+            }
+
+            return streams;
         }
         catch (Exception ex)
         {
@@ -88,7 +100,18 @@ public sealed partial class TorrentioClient
                 .GetFromJsonAsync<TorrentioResponse>(url, cancellationToken)
                 .ConfigureAwait(false);
 
-            return response?.Streams ?? [];
+            var streams = response?.Streams ?? [];
+            var onlyX264 = PremioPlugin.Instance?.Configuration?.OnlyX264Streams ?? true;
+            if (onlyX264)
+            {
+                var filtered = streams.Where(s => s.IsX264).ToList();
+                if (filtered.Count > 0)
+                {
+                    return filtered;
+                }
+            }
+
+            return streams;
         }
         catch (Exception ex)
         {

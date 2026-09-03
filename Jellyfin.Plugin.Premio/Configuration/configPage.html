@@ -54,6 +54,15 @@
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">When enabled, selecting an alternative stream replaces existing <code>.strm</code> files with the new stream URL.</div>
                         </div>
+
+                        <!-- Only x264 Checkbox -->
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input id="chkOnlyX264" name="chkOnlyX264" type="checkbox" is="emby-checkbox" />
+                                <span>Filter stream results to H.264 / x264 only</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Excludes x265, HEVC, and 10-bit HDR streams so streams Direct-Play natively in web browsers without triggering server transcoding.</div>
+                        </div>
                     </div>
 
                     <!-- Advanced Settings -->
@@ -109,6 +118,7 @@
                         document.querySelector('#txtTvShowsStrmDir').value = config.TvShowsStrmDirectory || '';
                         document.querySelector('#txtStrmOutputDir').value = config.StrmOutputDirectory || '';
                         document.querySelector('#chkOverwrite').checked = config.OverwriteExistingStrmFiles !== false;
+                        document.querySelector('#chkOnlyX264').checked = config.OnlyX264Streams !== false;
                         document.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                         document.querySelector('#txtApiBaseUrl').value = config.ApiBaseUrl || 'https://www.premiumize.me/api';
                         document.querySelector('#txtMaxSearchResults').value = config.MaxSearchResults || 50;
@@ -129,6 +139,7 @@
                         config.TvShowsStrmDirectory = document.querySelector('#txtTvShowsStrmDir').value;
                         config.StrmOutputDirectory = document.querySelector('#txtStrmOutputDir').value;
                         config.OverwriteExistingStrmFiles = document.querySelector('#chkOverwrite').checked;
+                        config.OnlyX264Streams = document.querySelector('#chkOnlyX264').checked;
                         config.TmdbApiKey = document.querySelector('#txtTmdbApiKey').value;
                         config.ApiBaseUrl = document.querySelector('#txtApiBaseUrl').value || 'https://www.premiumize.me/api';
                         config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10) || 50;

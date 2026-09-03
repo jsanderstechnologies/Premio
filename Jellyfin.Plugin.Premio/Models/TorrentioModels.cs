@@ -100,4 +100,39 @@ public sealed partial class TorrentioStreamResult
             return lines.Length > 0 ? lines[0].Trim() : Title;
         }
     }
+
+    /// <summary>Gets a value indicating whether this stream is an H.264 / x264 release.</summary>
+    [JsonIgnore]
+    public bool IsX264
+    {
+        get
+        {
+            var text = $"{Name} {Title}";
+            var isHevc = text.Contains("x265", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("h265", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("h.265", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("hevc", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("10bit", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("10-bit", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("4320p", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("2160p", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("4k", StringComparison.OrdinalIgnoreCase) ||
+                         text.Contains("8k", StringComparison.OrdinalIgnoreCase);
+
+            if (isHevc)
+            {
+                return false;
+            }
+
+            return text.Contains("x264", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("h264", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("h.264", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("avc", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("x.264", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("h 264", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("1080p", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("720p", StringComparison.OrdinalIgnoreCase) ||
+                   text.Contains("480p", StringComparison.OrdinalIgnoreCase);
+        }
+    }
 }
