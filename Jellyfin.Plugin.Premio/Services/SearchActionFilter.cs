@@ -1063,11 +1063,26 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         HashSet<string> excludeTypes,
         HashSet<string> mediaTypes)
     {
+        ArgumentNullException.ThrowIfNull(hintResult);
+        ArgumentNullException.ThrowIfNull(tmdbItems);
+        ArgumentNullException.ThrowIfNull(includeTypes);
+        ArgumentNullException.ThrowIfNull(excludeTypes);
+        ArgumentNullException.ThrowIfNull(mediaTypes);
+
         var existingHints = new List<SearchHint>(hintResult.SearchHints);
 
-        foreach (var tmdbItem in tmdbItems)
+        for (var i = 0; i < tmdbItems.Count; i++)
         {
+            var tmdbItem = tmdbItems[i];
             if (!MatchesFilter(tmdbItem, includeTypes, excludeTypes, mediaTypes))
+            {
+                continue;
+            }
+
+            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
+
+            // Skip TMDB item if an item with the same title/year is already in local library results
+            if (IsAlreadyInSearchHints(existingHints, tmdbItem, prodYear))
             {
                 continue;
             }
@@ -1080,8 +1095,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
                 : tmdbItem.DisplayTitle;
-
-            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var hint = new SearchHint
             {
@@ -1108,12 +1121,27 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         HashSet<string> excludeTypes,
         HashSet<string> mediaTypes)
     {
+        ArgumentNullException.ThrowIfNull(queryResult);
+        ArgumentNullException.ThrowIfNull(tmdbItems);
+        ArgumentNullException.ThrowIfNull(includeTypes);
+        ArgumentNullException.ThrowIfNull(excludeTypes);
+        ArgumentNullException.ThrowIfNull(mediaTypes);
+
         var existingItems = new List<BaseItemDto>(queryResult.Items);
         var serverId = _appHost.SystemId;
 
-        foreach (var tmdbItem in tmdbItems)
+        for (var i = 0; i < tmdbItems.Count; i++)
         {
+            var tmdbItem = tmdbItems[i];
             if (!MatchesFilter(tmdbItem, includeTypes, excludeTypes, mediaTypes))
+            {
+                continue;
+            }
+
+            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
+
+            // Skip TMDB item if an item with the same title/year is already in local library results
+            if (IsAlreadyInQueryItems(existingItems, tmdbItem, prodYear))
             {
                 continue;
             }
@@ -1126,8 +1154,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var displayName = !isPerson && !string.IsNullOrWhiteSpace(tmdbItem.Year)
                 ? $"{tmdbItem.DisplayTitle} ({tmdbItem.Year})"
                 : tmdbItem.DisplayTitle;
-
-            var prodYear = int.TryParse(tmdbItem.Year, out var y) ? (int?)y : null;
 
             var dto = new BaseItemDto
             {
@@ -1148,6 +1174,84 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
+    }
+
+    private static bool IsAlreadyInSearchHints(IReadOnlyList<SearchHint> existingHints, TmdbItem tmdbItem, int? prodYear)
+    {
+        var tmdbTitle = CleanTitleForComparison(tmdbItem.DisplayTitle);
+        if (string.IsNullOrWhiteSpace(tmdbTitle))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < existingHints.Count; i++)
+        {
+            var hint = existingHints[i];
+            var hintTitle = CleanTitleForComparison(hint.Name);
+
+            if (string.Equals(hintTitle, tmdbTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                if (hint.ProductionYear.HasValue && prodYear.HasValue)
+                {
+                    if (hint.ProductionYear.Value == prodYear.Value)
+                    {
+                        return true;
+                    }
+                }
+                else
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAlreadyInQueryItems(IReadOnlyList<BaseItemDto> existingItems, TmdbItem tmdbItem, int? prodYear)
+    {
+        var tmdbTitle = CleanTitleForComparison(tmdbItem.DisplayTitle);
+        var tmdbIdStr = tmdbItem.Id.ToString(CultureInfo.InvariantCulture);
+
+        for (var i = 0; i < existingItems.Count; i++)
+        {
+            var item = existingItems[i];
+
+            if (item.ProviderIds is not null && item.ProviderIds.TryGetValue("Tmdb", out var existingTmdbId) && string.Equals(existingTmdbId, tmdbIdStr, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var itemTitle = CleanTitleForComparison(item.Name);
+            if (string.Equals(itemTitle, tmdbTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                if (item.ProductionYear.HasValue && prodYear.HasValue)
+                {
+                    if (item.ProductionYear.Value == prodYear.Value)
+                    {
+                        return true;
+                    }
+                }
+                else
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string CleanTitleForComparison(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = Regex.Replace(title, @"\s*\(\d{4}\)\s*", " ").Trim();
+        cleaned = Regex.Replace(cleaned, @"[^\w\d\s]", "").Trim();
+        return cleaned;
     }
 
     private static TmdbItem? FindMatchingItem(IReadOnlyList<TmdbItem> results, bool isTv)
