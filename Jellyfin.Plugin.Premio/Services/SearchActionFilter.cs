@@ -781,6 +781,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     SupportsTranscoding = true,
                     MediaStreams = defaultStreams.ToList()
                 });
+            }
+
             if (hasRealChosenStream)
             {
                 mediaSources.RemoveAll(m => m.Name == "Select a Stream" || m.Path.Contains("select_stream", StringComparison.OrdinalIgnoreCase));
