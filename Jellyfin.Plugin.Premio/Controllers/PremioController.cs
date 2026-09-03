@@ -1,11 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Mime;
+using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using Jellyfin.Plugin.Premio.Services;
 using MediaBrowser.Controller.Entities;
@@ -365,11 +369,20 @@ public sealed partial class PremioController : ControllerBase
                 ? $"{request.Title} - S{request.Season.Value:D2}E{request.Episode.Value:D2}"
                 : (!string.IsNullOrWhiteSpace(request.Year) ? $"{request.Title} ({request.Year})" : request.Title);
 
-            var strmPath = await _strmService.WriteMediaStrmFileAsync(
-                formattedTitle,
-                new Uri(streamUrl),
-                request.IsTv,
-                cancellationToken).ConfigureAwait(false);
+            var strmPath = request.IsTv && request.Season.HasValue && request.Episode.HasValue
+                ? await _strmService.WriteMediaStrmFileAsync(
+                    request.Title,
+                    request.Year,
+                    new Uri(streamUrl),
+                    isTvShow: true,
+                    season: request.Season.Value,
+                    episode: request.Episode.Value,
+                    cancellationToken).ConfigureAwait(false)
+                : await _strmService.WriteMediaStrmFileAsync(
+                    formattedTitle,
+                    new Uri(streamUrl),
+                    request.IsTv,
+                    cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(strmPath))
             {
@@ -677,6 +690,429 @@ public sealed partial class PremioController : ControllerBase
         catch (Exception ex)
         {
             LogAddStreamFailed(_logger, title, ex.Message);
+            return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Renders an interactive web interface for browsing and selecting streams for any episode of a TV show.
+    /// </summary>
+    /// <param name="seriesId">Optional Jellyfin series GUID.</param>
+    /// <param name="title">Optional TV show title.</param>
+    /// <param name="year">Optional release year.</param>
+    /// <param name="imdbId">Optional IMDb ID.</param>
+    /// <param name="season">Optional focused season number.</param>
+    /// <param name="episode">Optional focused episode number.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>HTML stream selection page.</returns>
+    [HttpGet("Web/ShowStreams")]
+    [Produces("text/html")]
+    [AllowAnonymous]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Action returns readable error page if exception occurs.")]
+    public async Task<IActionResult> ShowStreams(
+        [FromQuery] string? seriesId,
+        [FromQuery] string? title,
+        [FromQuery] string? year,
+        [FromQuery] string? imdbId,
+        [FromQuery] int? season,
+        [FromQuery] int? episode,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var seriesTitle = title;
+            var seriesYear = year;
+            var resolvedImdbId = imdbId;
+            var episodeList = new List<(int Season, int Episode, string Name)>();
+
+            if (!string.IsNullOrWhiteSpace(seriesId) && Guid.TryParse(seriesId, out var sGuid))
+            {
+                var seriesItem = _libraryManager.GetItemById(sGuid);
+                if (seriesItem is not null)
+                {
+                    seriesTitle ??= seriesItem.Name;
+                    seriesYear ??= seriesItem.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+                    resolvedImdbId ??= seriesItem.GetProviderId("Imdb");
+                    if (string.IsNullOrWhiteSpace(resolvedImdbId) && int.TryParse(seriesItem.GetProviderId("Tmdb"), out var tmdbId))
+                    {
+                        resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    var query = new InternalItemsQuery
+                    {
+                        ParentId = sGuid,
+                        Recursive = true,
+                        IncludeItemTypes = [BaseItemKind.Episode]
+                    };
+                    var items = _libraryManager.GetItemList(query);
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        if (items[i] is MediaBrowser.Controller.Entities.TV.Episode ep)
+                        {
+                            episodeList.Add((ep.ParentIndexNumber ?? 1, ep.IndexNumber ?? 1, ep.Name));
+                        }
+                    }
+                }
+            }
+
+            seriesTitle ??= "TV Show";
+
+            if (string.IsNullOrWhiteSpace(resolvedImdbId))
+            {
+                var searchResults = await _tmdbClient.SearchMultiAsync(seriesTitle, cancellationToken).ConfigureAwait(false);
+                var match = searchResults.FirstOrDefault(r => string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)) ?? searchResults.FirstOrDefault();
+                if (match is not null)
+                {
+                    resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", match.Id, cancellationToken).ConfigureAwait(false);
+                    seriesYear ??= match.Year;
+                }
+            }
+
+            if (episodeList.Count == 0)
+            {
+                for (var s = 1; s <= 4; s++)
+                {
+                    for (var e = 1; e <= 8; e++)
+                    {
+                        episodeList.Add((s, e, $"Episode {e}"));
+                    }
+                }
+            }
+
+            var seasonGroups = episodeList
+                .GroupBy(e => e.Season)
+                .OrderByDescending(g => g.Key)
+                .ToList();
+
+            var focusedSeason = season ?? seasonGroups[0].Key;
+            var focusedEpisode = episode ?? 1;
+
+            var safeTitle = WebUtility.HtmlEncode(seriesTitle);
+            var safeYear = WebUtility.HtmlEncode(seriesYear ?? string.Empty);
+            var safeSeriesId = WebUtility.HtmlEncode(seriesId ?? string.Empty);
+            var safeImdbId = WebUtility.HtmlEncode(resolvedImdbId ?? string.Empty);
+
+            var sbEpisodes = new StringBuilder();
+            for (var i = 0; i < seasonGroups.Count; i++)
+            {
+                var group = seasonGroups[i];
+                var sNum = group.Key;
+                var isOpen = sNum == focusedSeason ? "open" : string.Empty;
+
+                sbEpisodes.Append($"""
+                    <details class="season-section" {isOpen}>
+                        <summary class="season-header">Season {sNum} <span class="badge">{group.Count()} Episodes</span></summary>
+                        <div class="episodes-list">
+                    """);
+
+                var eps = group.OrderBy(e => e.Episode).ToList();
+                for (var j = 0; j < eps.Count; j++)
+                {
+                    var ep = eps[j];
+                    var epCode = $"S{ep.Season:D2}E{ep.Episode:D2}";
+                    var safeEpName = WebUtility.HtmlEncode(ep.Name);
+
+                    sbEpisodes.Append($"""
+                            <div class="episode-card" id="card-{ep.Season}-{ep.Episode}">
+                                <div class="ep-row">
+                                    <span class="ep-badge">{epCode}</span>
+                                    <span class="ep-title">{safeEpName}</span>
+                                    <button class="btn btn-search" id="btn-{ep.Season}-{ep.Episode}" onclick="loadStreams({ep.Season}, {ep.Episode})">🔍 Find Streams</button>
+                                </div>
+                                <div id="streams-{ep.Season}-{ep.Episode}" class="stream-results" style="display:none;"></div>
+                            </div>
+                        """);
+                }
+
+                sbEpisodes.Append("</div></details>");
+            }
+
+            var episodesHtml = sbEpisodes.ToString();
+
+            var html = $$"""
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <title>{{safeTitle}} - Select Episode Streams</title>
+                    <style>
+                        :root {
+                            --bg: #101010;
+                            --card: #1c1c1c;
+                            --card-hover: #262626;
+                            --accent: #00a4dc;
+                            --accent-hover: #0085b2;
+                            --text: #ffffff;
+                            --text-dim: #a0a0a0;
+                            --border: #333333;
+                            --cached: #10b981;
+                        }
+                        * { box-sizing: border-box; margin: 0; padding: 0; }
+                        body {
+                            background: var(--bg);
+                            color: var(--text);
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                            padding: 20px;
+                            max-width: 960px;
+                            margin: 0 auto;
+                        }
+                        .header {
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            flex-wrap: wrap;
+                            gap: 15px;
+                            margin-bottom: 25px;
+                            padding-bottom: 15px;
+                            border-bottom: 1px solid var(--border);
+                        }
+                        .header-left h1 { font-size: 24px; font-weight: 700; }
+                        .header-left p { color: var(--text-dim); margin-top: 4px; font-size: 14px; }
+                        .btn {
+                            display: inline-flex;
+                            align-items: center;
+                            justify-content: center;
+                            padding: 8px 16px;
+                            border-radius: 6px;
+                            border: none;
+                            cursor: pointer;
+                            font-size: 14px;
+                            font-weight: 600;
+                            text-decoration: none;
+                            transition: all 0.2s;
+                        }
+                        .btn-back { background: #2a2a2a; color: var(--text); }
+                        .btn-back:hover { background: #383838; }
+                        .btn-search { background: var(--accent); color: #fff; }
+                        .btn-search:hover { background: var(--accent-hover); }
+                        .btn-select { background: #1f2937; color: #fff; border: 1px solid #374151; }
+                        .btn-select:hover { background: var(--accent); border-color: var(--accent); }
+                        .season-section {
+                            background: var(--card);
+                            border-radius: 8px;
+                            margin-bottom: 15px;
+                            border: 1px solid var(--border);
+                            overflow: hidden;
+                        }
+                        .season-header {
+                            padding: 16px 20px;
+                            font-size: 18px;
+                            font-weight: 700;
+                            cursor: pointer;
+                            display: flex;
+                            align-items: center;
+                            gap: 10px;
+                            user-select: none;
+                        }
+                        .season-header:hover { background: var(--card-hover); }
+                        .badge {
+                            background: rgba(255,255,255,0.1);
+                            padding: 2px 8px;
+                            border-radius: 12px;
+                            font-size: 12px;
+                            font-weight: normal;
+                        }
+                        .badge-cached { background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 600; }
+                        .badge-torrent { background: rgba(245, 158, 11, 0.2); color: #fbbf24; font-weight: 600; }
+                        .episodes-list { padding: 10px 15px; }
+                        .episode-card {
+                            background: #141414;
+                            border: 1px solid var(--border);
+                            border-radius: 6px;
+                            margin-bottom: 10px;
+                            padding: 12px 16px;
+                        }
+                        .ep-row {
+                            display: flex;
+                            align-items: center;
+                            gap: 12px;
+                            flex-wrap: wrap;
+                        }
+                        .ep-badge {
+                            background: #2b2b2b;
+                            color: var(--accent);
+                            font-weight: 700;
+                            font-size: 13px;
+                            padding: 4px 8px;
+                            border-radius: 4px;
+                        }
+                        .ep-title { font-weight: 600; flex: 1; min-width: 150px; }
+                        .stream-results {
+                            margin-top: 12px;
+                            padding-top: 12px;
+                            border-top: 1px solid #222;
+                        }
+                        .stream-item {
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            gap: 15px;
+                            padding: 10px;
+                            background: #1e1e1e;
+                            border-radius: 6px;
+                            margin-bottom: 8px;
+                            border: 1px solid #2d2d2d;
+                        }
+                        .stream-item:hover { border-color: #444; }
+                        .stream-name {
+                            font-size: 13px;
+                            font-weight: 500;
+                            word-break: break-all;
+                            line-height: 1.4;
+                        }
+                        .stream-meta {
+                            display: flex;
+                            gap: 8px;
+                            margin-top: 5px;
+                            font-size: 12px;
+                            color: var(--text-dim);
+                        }
+                        .toast {
+                            position: fixed;
+                            bottom: 30px;
+                            right: 30px;
+                            background: #10b981;
+                            color: #fff;
+                            padding: 12px 24px;
+                            border-radius: 8px;
+                            font-weight: 600;
+                            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                            opacity: 0;
+                            pointer-events: none;
+                            transition: opacity 0.3s ease;
+                            z-index: 1000;
+                        }
+                        .toast.show { opacity: 1; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <div class="header-left">
+                            <h1>🎬 {{safeTitle}} <span style="font-weight:400; color:var(--text-dim);">({{safeYear}})</span></h1>
+                            <p>Select your preferred stream version for each episode. Saved streams bind directly to your Jellyfin library.</p>
+                        </div>
+                        <a href="/web/index.html#/details?id={{safeSeriesId}}" class="btn btn-back">← Back to Show in Jellyfin</a>
+                    </div>
+
+                    {{episodesHtml}}
+
+                    <div id="toast" class="toast"></div>
+
+                    <script>
+                        const title = "{{safeTitle}}";
+                        const year = "{{safeYear}}";
+                        const imdbId = "{{safeImdbId}}";
+
+                        async function loadStreams(s, ep) {
+                            const box = document.getElementById(`streams-${s}-${ep}`);
+                            const btn = document.getElementById(`btn-${s}-${ep}`);
+                            box.style.display = 'block';
+                            box.innerHTML = '<div style="color:var(--text-dim); font-size:13px; padding:8px 0;">Searching Torrentio & checking Premiumize cache...</div>';
+                            btn.disabled = true;
+
+                            try {
+                                const url = `/Premio/Streams?type=tv&imdbId=${encodeURIComponent(imdbId)}&season=${s}&episode=${ep}&title=${encodeURIComponent(title)}&year=${encodeURIComponent(year)}`;
+                                const res = await fetch(url);
+                                const streams = await res.json();
+                                if (!streams || streams.length === 0) {
+                                    box.innerHTML = '<div style="color:#ef4444; font-size:13px; padding:8px 0;">No streams found for this episode.</div>';
+                                    btn.disabled = false;
+                                    return;
+                                }
+
+                                let html = '';
+                                for (const st of streams) {
+                                    const cachedBadge = st.isCached 
+                                        ? '<span class="badge badge-cached">⚡ Instant Cached</span>' 
+                                        : '<span class="badge badge-torrent">⏳ Cloud Download</span>';
+                                    const size = st.fileSize ? `<span class="badge">${st.fileSize}</span>` : '';
+                                    const seeders = `<span class="badge">👤 ${st.seeders || 0}</span>`;
+                                    
+                                    html += `
+                                        <div class="stream-item">
+                                            <div style="flex:1;">
+                                                <div class="stream-name">${escapeHtml(st.cleanReleaseName)}</div>
+                                                <div class="stream-meta">${cachedBadge} ${size} ${seeders}</div>
+                                            </div>
+                                            <button class="btn btn-select" onclick="selectStream('${s}', '${ep}', '${st.infoHash}', this)">Select Stream</button>
+                                        </div>
+                                    `;
+                                }
+                                box.innerHTML = html;
+                            } catch (err) {
+                                box.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:8px 0;">Failed to load streams: ${err.message}</div>`;
+                            } finally {
+                                btn.disabled = false;
+                            }
+                        }
+
+                        async function selectStream(s, ep, hash, btn) {
+                            btn.textContent = 'Saving...';
+                            btn.disabled = true;
+                            try {
+                                const res = await fetch('/Premio/AddStream', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        title: title,
+                                        year: year,
+                                        isTv: true,
+                                        season: parseInt(s, 10),
+                                        episode: parseInt(ep, 10),
+                                        infoHash: hash
+                                    })
+                                });
+                                const data = await res.json();
+                                if (res.ok && data.success) {
+                                    btn.textContent = '✓ Saved!';
+                                    btn.style.backgroundColor = '#10b981';
+                                    btn.style.color = '#ffffff';
+                                    showToast(`✓ Saved stream for S${String(s).padStart(2,'0')}E${String(ep).padStart(2,'0')}!`);
+                                } else {
+                                    btn.textContent = 'Error';
+                                    btn.disabled = false;
+                                    alert(data.message || 'Failed to save stream');
+                                }
+                            } catch (e) {
+                                btn.textContent = 'Error';
+                                btn.disabled = false;
+                                alert(e.message);
+                            }
+                        }
+
+                        function escapeHtml(str) {
+                            return (str || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[m]);
+                        }
+
+                        function showToast(msg) {
+                            const toast = document.getElementById('toast');
+                            toast.textContent = msg;
+                            toast.className = 'toast show';
+                            setTimeout(() => { toast.className = 'toast'; }, 3000);
+                        }
+
+                        const autoSeason = {{focusedSeason}};
+                        const autoEpisode = {{focusedEpisode}};
+                        if (autoSeason > 0 && autoEpisode > 0) {
+                            window.addEventListener('DOMContentLoaded', () => {
+                                const el = document.getElementById(`card-${autoSeason}-${autoEpisode}`);
+                                if (el) {
+                                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    loadStreams(autoSeason, autoEpisode);
+                                }
+                            });
+                        }
+                    </script>
+                </body>
+                </html>
+                """;
+
+            return Content(html, "text/html");
+        }
+        catch (Exception ex)
+        {
+            LogAddStreamFailed(_logger, title ?? "Show", ex.Message);
             return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
         }
     }

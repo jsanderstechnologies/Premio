@@ -359,11 +359,32 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // ---------------------------------------------------------------------
         // 4. Enrich existing library item details with Torrentio stream version dropdown
         // ---------------------------------------------------------------------
-        if (executedContext.Result is ObjectResult objResult && objResult.Value is BaseItemDto libraryDto &&
-            (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Episode))
+        if (executedContext.Result is ObjectResult objResult)
         {
-            await EnrichExistingLibraryItemDtoAsync(libraryDto, cancellationToken).ConfigureAwait(false);
-            return;
+            if (objResult.Value is BaseItemDto libraryDto)
+            {
+                if (libraryDto.Type == BaseItemKind.Series)
+                {
+                    AddPickStreamsExternalUrl(libraryDto);
+                }
+                else if (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Episode)
+                {
+                    await EnrichExistingLibraryItemDtoAsync(libraryDto, cancellationToken).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            if (objResult.Value is QueryResult<BaseItemDto> queryResult && queryResult.Items.Count > 0)
+            {
+                if (queryResult.Items[0].Type == BaseItemKind.Episode)
+                {
+                    var tasks = queryResult.Items.Select(ep => EnrichExistingLibraryItemDtoAsync(ep, cancellationToken));
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
+                }
+
+                return;
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -560,6 +581,45 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return dto;
     }
 
+    private static void AddPickStreamsExternalUrl(BaseItemDto seriesDto)
+    {
+        var existingUrls = seriesDto.ExternalUrls?.ToList() ?? new List<ExternalUrl>();
+        for (var i = 0; i < existingUrls.Count; i++)
+        {
+            if (existingUrls[i].Name.Contains("Pick Episode Streams", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        existingUrls.Add(new ExternalUrl
+        {
+            Name = "🎬 Pick Episode Streams",
+            Url = $"/Premio/Web/ShowStreams?seriesId={seriesDto.Id}"
+        });
+        seriesDto.ExternalUrls = existingUrls.ToArray();
+    }
+
+    private static void AddEpisodeStreamExternalUrl(BaseItemDto episodeDto, int season, int episode, string showTitle, string? imdbId)
+    {
+        var existingUrls = episodeDto.ExternalUrls?.ToList() ?? new List<ExternalUrl>();
+        for (var i = 0; i < existingUrls.Count; i++)
+        {
+            if (existingUrls[i].Name.Contains("Select Stream", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        var seriesIdStr = episodeDto.SeriesId?.ToString() ?? string.Empty;
+        existingUrls.Add(new ExternalUrl
+        {
+            Name = "🎬 Select Stream",
+            Url = $"/Premio/Web/ShowStreams?seriesId={seriesIdStr}&season={season}&episode={episode}&title={Uri.EscapeDataString(showTitle)}&imdbId={Uri.EscapeDataString(imdbId ?? string.Empty)}"
+        });
+        episodeDto.ExternalUrls = existingUrls.ToArray();
+    }
+
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Library enrichment catches all exceptions to avoid disrupting native library item rendering.")]
     private async Task EnrichExistingLibraryItemDtoAsync(BaseItemDto itemDto, CancellationToken cancellationToken)
     {
@@ -734,6 +794,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             itemDto.Container = "mp4";
             itemDto.MediaStreams = defaultStreams;
             itemDto.MediaSources = mediaSources.ToArray();
+
+            if (isTv)
+            {
+                AddEpisodeStreamExternalUrl(itemDto, seasonNumber, episodeNumber, searchTitle, imdbId);
+            }
         }
         catch (Exception ex)
         {
