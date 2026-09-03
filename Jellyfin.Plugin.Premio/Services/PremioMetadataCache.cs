@@ -137,6 +137,7 @@ public static class PremioMetadataCache
     }
 
     /// <summary>
+    /// <summary>
     /// Attempts to retrieve the cached TMDB item.
     /// </summary>
     /// <param name="id">Item GUID.</param>
@@ -145,5 +146,45 @@ public static class PremioMetadataCache
     public static bool TryGetItem(Guid id, out TmdbItem? item)
     {
         return ItemMap.TryGetValue(id, out item);
+    }
+
+    private static readonly ConcurrentDictionary<string, string> EpisodeChosenHashMap = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Registers the chosen torrent infohash for a specific TV episode.
+    /// </summary>
+    /// <param name="showTitle">Series title.</param>
+    /// <param name="season">Season number.</param>
+    /// <param name="episode">Episode number.</param>
+    /// <param name="infoHash">Torrent infohash.</param>
+    public static void RegisterChosenEpisodeStream(string showTitle, int season, int episode, string infoHash)
+    {
+        if (string.IsNullOrWhiteSpace(showTitle) || string.IsNullOrWhiteSpace(infoHash))
+        {
+            return;
+        }
+
+        var key = $"{showTitle.Trim()}:{season}:{episode}";
+        EpisodeChosenHashMap[key] = infoHash;
+    }
+
+    /// <summary>
+    /// Attempts to retrieve the chosen torrent infohash for a specific TV episode.
+    /// </summary>
+    /// <param name="showTitle">Series title.</param>
+    /// <param name="season">Season number.</param>
+    /// <param name="episode">Episode number.</param>
+    /// <param name="infoHash">Output torrent infohash.</param>
+    /// <returns><c>true</c> if found; otherwise, <c>false</c>.</returns>
+    public static bool TryGetChosenEpisodeStream(string showTitle, int season, int episode, out string? infoHash)
+    {
+        if (string.IsNullOrWhiteSpace(showTitle))
+        {
+            infoHash = null;
+            return false;
+        }
+
+        var key = $"{showTitle.Trim()}:{season}:{episode}";
+        return EpisodeChosenHashMap.TryGetValue(key, out infoHash);
     }
 }

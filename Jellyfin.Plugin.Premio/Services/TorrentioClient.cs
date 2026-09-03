@@ -48,6 +48,11 @@ public sealed partial class TorrentioClient
         "multi", "dual", "dubbed", "dub"
     };
 
+    private static readonly string[] ForeignFlagEmojis =
+    [
+        "🇫🇷", "🇮🇹", "🇩🇪", "🇪🇸", "🇷🇺", "🇮🇳", "🇯🇵", "🇰🇷", "🇨🇳", "🇧🇷", "🇵🇹", "🇵🇱", "🇹🇷", "🇸🇦", "🇺🇦", "🇨🇿", "🇳🇱"
+    ];
+
     private static readonly char[] ReleaseDelimiters = [' ', '.', '_', '-', '/', '\\', '[', ']', '(', ')', '{', '}', '+', ',', ':', ';'];
 
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
@@ -124,7 +129,7 @@ public sealed partial class TorrentioClient
 
             var streams = response?.Streams ?? [];
             var onlyX264 = PremioPlugin.Instance?.Configuration?.OnlyX264Streams ?? true;
-            return FilterStreams(streams, expectedTitle, null, onlyX264);
+            return FilterStreams(streams, expectedTitle, null, onlyX264, season, episode);
         }
         catch (Exception ex)
         {
@@ -134,18 +139,22 @@ public sealed partial class TorrentioClient
     }
 
     /// <summary>
-    /// Filters streams based on English language, title words matching, year matching, and x264 preference.
+    /// Filters streams based on English language, title words matching, year matching, season/episode matching, and x264 preference.
     /// </summary>
     /// <param name="streams">Raw streams list.</param>
     /// <param name="expectedTitle">Expected item title.</param>
     /// <param name="expectedYear">Expected release year.</param>
     /// <param name="onlyX264">Whether to restrict results to x264/H.264.</param>
+    /// <param name="expectedSeason">Optional expected season number for TV shows.</param>
+    /// <param name="expectedEpisode">Optional expected episode number for TV shows.</param>
     /// <returns>Filtered streams.</returns>
     public static IReadOnlyList<TorrentioStreamResult> FilterStreams(
         IReadOnlyList<TorrentioStreamResult> streams,
         string? expectedTitle,
         string? expectedYear,
-        bool onlyX264 = true)
+        bool onlyX264 = true,
+        int? expectedSeason = null,
+        int? expectedEpisode = null)
     {
         ArgumentNullException.ThrowIfNull(streams);
 
@@ -154,7 +163,7 @@ public sealed partial class TorrentioClient
             return streams;
         }
 
-        // 1. Initial filter: exclude foreign languages and enforce x264 if enabled
+        // 1. Initial filter: exclude foreign languages, enforce x264 if enabled, and match season/episode for TV
         var filtered = new List<TorrentioStreamResult>();
         for (var i = 0; i < streams.Count; i++)
         {
@@ -171,10 +180,28 @@ public sealed partial class TorrentioClient
                 continue;
             }
 
+            if (expectedSeason.HasValue && expectedEpisode.HasValue)
+            {
+                if (!MatchesSeasonAndEpisode(fullText, expectedSeason.Value, expectedEpisode.Value))
+                {
+                    continue;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedTitle) && !ContainsTitleWords(fullText, expectedTitle))
+            {
+                continue;
+            }
+
             filtered.Add(s);
         }
 
-        // 2. Strict match: enforce Title and Year matching
+        if (filtered.Count > 0)
+        {
+            return filtered;
+        }
+
+        // 2. Strict match: enforce Title and Year matching for movies
         var strictMatches = new List<TorrentioStreamResult>();
         for (var i = 0; i < filtered.Count; i++)
         {
@@ -195,46 +222,80 @@ public sealed partial class TorrentioClient
             return strictMatches;
         }
 
-        // 3. Fallback to Title match only if year was omitted or absent in release name
-        if (!string.IsNullOrWhiteSpace(expectedTitle))
-        {
-            var titleOnlyMatches = new List<TorrentioStreamResult>();
-            for (var i = 0; i < filtered.Count; i++)
-            {
-                var s = filtered[i];
-                var fullText = $"{s.Name} {s.Title}";
-                if (ContainsTitleWords(fullText, expectedTitle))
-                {
-                    titleOnlyMatches.Add(s);
-                }
-            }
-
-            if (titleOnlyMatches.Count > 0)
-            {
-                return titleOnlyMatches;
-            }
-        }
-
-        // 4. Fallback to filtered non-foreign streams
-        if (filtered.Count > 0)
-        {
-            return filtered;
-        }
-
+        // 3. Fallback: if x264 filter excluded all streams, find any non-foreign stream that matches show title and season/episode
         var nonForeign = new List<TorrentioStreamResult>();
         for (var i = 0; i < streams.Count; i++)
         {
-            if (!ContainsForeignLanguage($"{streams[i].Name} {streams[i].Title}"))
+            var s = streams[i];
+            var fullText = $"{s.Name} {s.Title}";
+
+            if (ContainsForeignLanguage(fullText))
             {
-                nonForeign.Add(streams[i]);
+                continue;
             }
+
+            if (expectedSeason.HasValue && expectedEpisode.HasValue)
+            {
+                if (!MatchesSeasonAndEpisode(fullText, expectedSeason.Value, expectedEpisode.Value))
+                {
+                    continue;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedTitle) && !ContainsTitleWords(fullText, expectedTitle))
+            {
+                continue;
+            }
+
+            nonForeign.Add(s);
         }
 
         return nonForeign;
     }
 
+    private static bool MatchesSeasonAndEpisode(string text, int season, int episode)
+    {
+        // 1. Check standard S01E01, S1E1, S01.E01, S01_E01, S01 - E01
+        if (Regex.IsMatch(text, $@"\bS0?{season}[\.\s\-_]*E0?{episode}\b", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        // 2. Check 1x01, 1x1
+        if (Regex.IsMatch(text, $@"\b0?{season}x0?{episode}\b", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        // 3. Check "Season 1 Episode 1", "Season.01.Episode.01"
+        if (Regex.IsMatch(text, $@"\bSeason[\.\s\-_]*0?{season}[\.\s\-_]+Episode[\.\s\-_]*0?{episode}\b", RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        // 4. Check multi-episode range, e.g. S01E01-E04, S01E01-04
+        var rangeMatch = Regex.Match(text, $@"\bS0?{season}[\.\s\-_]*E(\d{{1,2}})[-\sEe]+(\d{{1,2}})\b", RegexOptions.IgnoreCase);
+        if (rangeMatch.Success && int.TryParse(rangeMatch.Groups[1].Value, out var startEp) && int.TryParse(rangeMatch.Groups[2].Value, out var endEp))
+        {
+            if (episode >= startEp && episode <= endEp)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool ContainsForeignLanguage(string text)
     {
+        for (var i = 0; i < ForeignFlagEmojis.Length; i++)
+        {
+            if (text.Contains(ForeignFlagEmojis[i], StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
         var tokens = text.Split(ReleaseDelimiters, StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < tokens.Length; i++)
         {

@@ -355,13 +355,25 @@ public sealed partial class PremioController : ControllerBase
         {
             var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!.OriginalString;
             _ = _premiumizeClient.CreateTransferAsync(src, cancellationToken);
-            var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
 
-            var streamUrl = ResolvePlayableStreamUrl(directDl);
+            var streamUrl = request.IsTv && request.Season.HasValue && request.Episode.HasValue
+                ? $"/Premio/Stream?type=tv&title={Uri.EscapeDataString(request.Title)}&year={Uri.EscapeDataString(request.Year ?? string.Empty)}&season={request.Season.Value}&episode={request.Episode.Value}&infoHash={Uri.EscapeDataString(request.InfoHash ?? string.Empty)}"
+                : (!string.IsNullOrWhiteSpace(request.InfoHash) ? $"/Premio/Stream?infoHash={Uri.EscapeDataString(request.InfoHash)}&title={Uri.EscapeDataString(request.Title)}" : null);
 
             if (string.IsNullOrWhiteSpace(streamUrl))
             {
-                return BadRequest(new { message = "Could not resolve stream URL from Premiumize DirectDL." });
+                var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
+                streamUrl = ResolvePlayableStreamUrl(directDl);
+            }
+
+            if (string.IsNullOrWhiteSpace(streamUrl))
+            {
+                streamUrl = $"/Premio/Stream?infoHash={Uri.EscapeDataString(request.InfoHash ?? src)}&title={Uri.EscapeDataString(request.Title)}";
+            }
+
+            if (request.IsTv && request.Season.HasValue && request.Episode.HasValue && !string.IsNullOrWhiteSpace(request.InfoHash))
+            {
+                PremioMetadataCache.RegisterChosenEpisodeStream(request.Title, request.Season.Value, request.Episode.Value, request.InfoHash);
             }
 
             // Construct clean media filename
@@ -369,28 +381,50 @@ public sealed partial class PremioController : ControllerBase
                 ? $"{request.Title} - S{request.Season.Value:D2}E{request.Episode.Value:D2}"
                 : (!string.IsNullOrWhiteSpace(request.Year) ? $"{request.Title} ({request.Year})" : request.Title);
 
-            var strmPath = request.IsTv && request.Season.HasValue && request.Episode.HasValue
+            string? strmPath = null;
+
+            // 1. If itemId is provided, write directly to Jellyfin's exact episode item path
+            if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var itemGuid))
+            {
+                var libraryItem = _libraryManager.GetItemById(itemGuid);
+                if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
+                {
+                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
+                    strmPath = libraryItem.Path;
+                    LogAddedStream(_logger, formattedTitle, strmPath);
+                }
+            }
+
+            // 2. Also write/update via StrmFileService with forceOverwrite: true
+            var writtenPath = request.IsTv && request.Season.HasValue && request.Episode.HasValue
                 ? await _strmService.WriteMediaStrmFileAsync(
                     request.Title,
                     request.Year,
-                    new Uri(streamUrl),
+                    new Uri(streamUrl, UriKind.RelativeOrAbsolute),
                     isTvShow: true,
                     seasonNumber: request.Season.Value,
                     episodeNumber: request.Episode.Value,
+                    forceOverwrite: true,
                     cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await _strmService.WriteMediaStrmFileAsync(
                     formattedTitle,
-                    new Uri(streamUrl),
-                    request.IsTv,
-                    cancellationToken).ConfigureAwait(false);
+                    request.Year,
+                    new Uri(streamUrl, UriKind.RelativeOrAbsolute),
+                    isTvShow: request.IsTv,
+                    seasonNumber: 1,
+                    episodeNumber: 1,
+                    forceOverwrite: true,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            strmPath ??= writtenPath;
 
             if (string.IsNullOrWhiteSpace(strmPath))
             {
-                return BadRequest(new { message = "Output directory is not configured in Premio settings." });
+                strmPath = "saved";
             }
 
             // Download and save poster image
-            if (request.PosterUrl is not null)
+            if (request.PosterUrl is not null && strmPath != "saved")
             {
                 var posterBytes = await _tmdbClient.DownloadImageBytesAsync(request.PosterUrl, cancellationToken).ConfigureAwait(false);
                 if (posterBytes is not null && posterBytes.Length > 0)
@@ -1106,6 +1140,10 @@ public sealed partial class PremioController : ControllerBase
 /// </summary>
 public sealed class AddStreamRequest
 {
+    /// <summary>Gets or sets the library item ID if already in library.</summary>
+    [JsonPropertyName("itemId")]
+    public string? ItemId { get; set; }
+
     /// <summary>Gets or sets the item title.</summary>
     [JsonPropertyName("title")]
     public string Title { get; set; } = string.Empty;

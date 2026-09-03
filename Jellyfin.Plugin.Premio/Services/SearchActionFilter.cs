@@ -669,39 +669,47 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             };
 
             var hasRealChosenStream = false;
+            string? chosenInfoHash = null;
 
-            // If item already exists in library with a current stream, update its properties for browser DirectPlay
-            if (itemDto.MediaSources is not null && itemDto.MediaSources.Length > 0)
+            // 1. Check in-memory chosen hash map
+            if (isTv && PremioMetadataCache.TryGetChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, out var memHash))
             {
-                for (var i = 0; i < itemDto.MediaSources.Length; i++)
-                {
-                    var existing = itemDto.MediaSources[i];
-                    if (existing.Id != "select_stream")
-                    {
-                        var path = existing.Path ?? string.Empty;
-                        var isConfiguredStream = (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !path.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase)
-                            || path.Contains("infoHash=", StringComparison.OrdinalIgnoreCase);
+                hasRealChosenStream = true;
+                chosenInfoHash = memHash;
+            }
 
-                        if (isConfiguredStream)
+            // 2. Read the .strm file on disk for this episode to recall chosen stream
+            var episodePath = itemDto.Path;
+            if (string.IsNullOrWhiteSpace(episodePath) && itemDto.Id != Guid.Empty)
+            {
+                var epItem = _libraryManager.GetItemById(itemDto.Id);
+                episodePath = epItem?.Path;
+            }
+
+            if (!string.IsNullOrWhiteSpace(episodePath) && File.Exists(episodePath))
+            {
+                try
+                {
+                    var fileContent = await File.ReadAllTextAsync(episodePath, cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(fileContent))
+                    {
+                        var trimmed = fileContent.Trim();
+                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                        if (hashMatch.Success)
                         {
                             hasRealChosenStream = true;
-                            var updatedName = !string.IsNullOrWhiteSpace(existing.Name) && !existing.Name.StartsWith("Current", StringComparison.OrdinalIgnoreCase)
-                                ? $"Current: {existing.Name}"
-                                : (string.IsNullOrWhiteSpace(existing.Name) ? "Current: Saved Stream" : existing.Name);
-
-                            existing.Name = updatedName;
-                            existing.Container = "mp4";
-                            existing.SupportsDirectPlay = true;
-                            existing.SupportsDirectStream = true;
-                            existing.SupportsTranscoding = true;
-                            existing.Protocol = MediaProtocol.Http;
-                            if (existing.MediaStreams is null || existing.MediaStreams.Count == 0)
-                            {
-                                existing.MediaStreams = defaultStreams.ToList();
-                            }
-                            mediaSources.Add(existing);
+                            chosenInfoHash = hashMatch.Groups[1].Value;
+                            PremioMetadataCache.RegisterChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, chosenInfoHash);
+                        }
+                        else if ((trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !trimmed.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasRealChosenStream = true;
                         }
                     }
+                }
+                catch
+                {
+                    // Ignore disk read exceptions
                 }
             }
 
@@ -788,15 +796,19 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var encodedYear = WebUtility.HtmlEncode(itemYear ?? string.Empty);
                     var seasonStr = seasonNumber.ToString(CultureInfo.InvariantCulture);
                     var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
+                    var itemIdStr = itemDto.Id != Guid.Empty ? itemDto.Id.ToString() : string.Empty;
 
-                    sbDropdown.Append("<div class=\"premio-stream-wrap\" onclick=\"event.stopPropagation();\" style=\"margin: 6px 0 8px 0; padding: 6px 10px; background: rgba(20,20,20,0.85); border: 1px solid #00a4dc; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;\">");
-                    sbDropdown.Append("<span style=\"color: #00a4dc; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;\">Version:</span>");
-                    sbDropdown.Append("<select class=\"emby-select\" style=\"background: #1a1a1a; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font-size: 11px; max-width: 280px; cursor: pointer;\" ");
+                    // Match exact Jellyfin Version droplist style
+                    sbDropdown.Append("<div class=\"selectContainer selectSourceContainer focusable\" onclick=\"event.stopPropagation();\" style=\"margin: 10px 0 8px 0; width: 100%; max-width: 520px;\">");
+                    sbDropdown.Append("<label class=\"selectLabel selectLabel-focused\" style=\"display: block; font-size: 12px; font-weight: 600; color: #00a4dc; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;\">Version</label>");
+                    sbDropdown.Append("<div style=\"display: flex; align-items: center; gap: 8px;\">");
+                    sbDropdown.Append("<select is=\"emby-select\" class=\"emby-select-withcolor emby-select\" style=\"flex: 1; font-size: 13px; padding: 7px 12px; border-radius: 4px; border: 1px solid #444; background: rgba(26,26,26,0.95); color: #fff; cursor: pointer;\" ");
+                    sbDropdown.Append("data-itemid=\"").Append(itemIdStr).Append("\" ");
                     sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
                     sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
                     sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
                     sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
-                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var st=s.nextElementSibling;st.textContent='Saving...';st.style.color='#f59e0b';fetch('/Premio/AddStream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:s.dataset.title,year:s.dataset.year,isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d.success){st.textContent='✓ Saved!';st.style.color='#10b981';setTimeout(function(){location.reload();},600);}else{st.textContent='Error';st.style.color='#ef4444';}}).catch(function(){st.textContent='Error';st.style.color='#ef4444';});})(this);\">");
+                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var st=s.nextElementSibling;st.textContent='Saving...';st.style.color='#f59e0b';fetch('/Premio/AddStream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itemId:s.dataset.itemid,title:s.dataset.title,year:s.dataset.year,isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d.success){st.textContent='✓ Saved!';st.style.color='#10b981';setTimeout(function(){location.reload();},600);}else{st.textContent='Error';st.style.color='#ef4444';}}).catch(function(){st.textContent='Error';st.style.color='#ef4444';});})(this);\">");
 
                     if (!hasRealChosenStream)
                     {
@@ -807,19 +819,44 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var st = streams[sIdx];
                         var sz = !string.IsNullOrWhiteSpace(st.FileSize) ? $" ({st.FileSize})" : string.Empty;
-                        var text = $"{st.CleanReleaseName}{sz}";
-                        var isSelected = hasRealChosenStream && sIdx == 0 ? "selected" : string.Empty;
-                        sbDropdown.Append("<option value=\"").Append(WebUtility.HtmlEncode(st.InfoHash)).Append("\" ").Append(isSelected).Append('>').Append(WebUtility.HtmlEncode(text)).Append("</option>");
+
+                        // Ensure release name has show name, season, and episode number
+                        var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
+                        var releaseName = st.CleanReleaseName;
+                        string text;
+                        if (releaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            text = $"{releaseName}{sz}";
+                        }
+                        else
+                        {
+                            text = $"{searchTitle} - {epCode} - {st.Quality}{sz} - {releaseName}";
+                        }
+
+                        var isSelected = false;
+                        if (!string.IsNullOrWhiteSpace(chosenInfoHash) && string.Equals(st.InfoHash, chosenInfoHash, StringComparison.OrdinalIgnoreCase))
+                        {
+                            isSelected = true;
+                        }
+                        else if (hasRealChosenStream && string.IsNullOrWhiteSpace(chosenInfoHash) && sIdx == 0)
+                        {
+                            isSelected = true;
+                        }
+
+                        var selAttr = isSelected ? "selected=\"selected\"" : string.Empty;
+                        sbDropdown.Append("<option value=\"").Append(WebUtility.HtmlEncode(st.InfoHash)).Append("\" ").Append(selAttr).Append('>').Append(WebUtility.HtmlEncode(text)).Append("</option>");
                     }
 
                     sbDropdown.Append("""
                             </select>
-                            <span style="font-size: 11px; font-weight: 600;"></span>
+                            <span class="stream-save-status" style="font-size: 12px; font-weight: 600; white-space: nowrap;"></span>
                         </div>
-                        """);
+                        <div class="selectUnderline" style="height: 1px; background: rgba(255,255,255,0.1); margin-top: 4px;"></div>
+                    </div>
+                    """);
 
                     var origOverview = itemDto.Overview ?? string.Empty;
-                    itemDto.Overview = sbDropdown.ToString() + (string.IsNullOrWhiteSpace(origOverview) ? string.Empty : $"<div style=\"margin-top: 4px;\">{origOverview}</div>");
+                    itemDto.Overview = sbDropdown.ToString() + (string.IsNullOrWhiteSpace(origOverview) ? string.Empty : $"<div style=\"margin-top: 6px;\">{origOverview}</div>");
                 }
 
                 if (!hasRealChosenStream)

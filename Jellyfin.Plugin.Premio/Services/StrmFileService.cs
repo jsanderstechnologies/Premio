@@ -86,6 +86,7 @@ public sealed partial class StrmFileService
         bool isTvShow = false,
         int seasonNumber = 1,
         int episodeNumber = 1,
+        bool forceOverwrite = true,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -109,11 +110,41 @@ public sealed partial class StrmFileService
 
         if (isTvShow)
         {
-            var seasonFolder = $"Season {seasonNumber}";
             var sNum = seasonNumber < 1 ? 1 : seasonNumber;
             var eNum = episodeNumber < 1 ? 1 : episodeNumber;
             fileName = $"{cleanTitle}.S{sNum:D2}E{eNum:D2}.strm";
-            directoryPath = Path.Combine(targetDir, folderWithYear, seasonFolder);
+
+            // Resolve existing show directory (with year or without year)
+            var showDirWithYear = Path.Combine(targetDir, folderWithYear);
+            var showDirWithoutYear = Path.Combine(targetDir, cleanTitle);
+            var parentShowDir = Directory.Exists(showDirWithYear)
+                ? showDirWithYear
+                : (Directory.Exists(showDirWithoutYear) ? showDirWithoutYear : showDirWithYear);
+
+            // Check existing season folder formats ("Season 04" vs "Season 4")
+            var seasonTwoDigit = Path.Combine(parentShowDir, $"Season {sNum:D2}");
+            var seasonOneDigit = Path.Combine(parentShowDir, $"Season {sNum}");
+
+            if (File.Exists(Path.Combine(seasonTwoDigit, fileName)))
+            {
+                directoryPath = seasonTwoDigit;
+            }
+            else if (File.Exists(Path.Combine(seasonOneDigit, fileName)))
+            {
+                directoryPath = seasonOneDigit;
+            }
+            else if (Directory.Exists(seasonTwoDigit))
+            {
+                directoryPath = seasonTwoDigit;
+            }
+            else if (Directory.Exists(seasonOneDigit))
+            {
+                directoryPath = seasonOneDigit;
+            }
+            else
+            {
+                directoryPath = seasonTwoDigit;
+            }
         }
         else
         {
@@ -123,7 +154,7 @@ public sealed partial class StrmFileService
 
         var absolutePath = Path.Combine(directoryPath, fileName);
 
-        if (File.Exists(absolutePath) && !Config.OverwriteExistingStrmFiles)
+        if (File.Exists(absolutePath) && !Config.OverwriteExistingStrmFiles && !forceOverwrite)
         {
             LogSkippingExistingFile(_logger, absolutePath);
             return absolutePath;
@@ -134,7 +165,7 @@ public sealed partial class StrmFileService
             Directory.CreateDirectory(directoryPath);
         }
 
-        await File.WriteAllTextAsync(absolutePath, streamUri.AbsoluteUri, cancellationToken)
+        await File.WriteAllTextAsync(absolutePath, streamUri.OriginalString, cancellationToken)
                   .ConfigureAwait(false);
 
         LogWroteFile(_logger, absolutePath);
