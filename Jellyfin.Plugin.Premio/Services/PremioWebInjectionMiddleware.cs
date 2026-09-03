@@ -45,7 +45,7 @@ public sealed class PremioWebInjectionMiddleware
         }
 
         var originalBodyStream = context.Response.Body;
-        await using var newBodyStream = new MemoryStream();
+        using var newBodyStream = new MemoryStream();
         context.Response.Body = newBodyStream;
 
         try
