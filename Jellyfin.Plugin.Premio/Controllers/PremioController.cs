@@ -128,9 +128,9 @@ public sealed partial class PremioController : ControllerBase
                 return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
             }
 
-            var title = cachedItem.DisplayTitle;
-            var year = cachedItem.Year;
-            var isTvShow = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var title = cachedItem?.DisplayTitle ?? "Unknown Media";
+            var year = cachedItem?.Year;
+            var isTvShow = string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
 
             // 2. Write .strm file & poster
             var strmPath = await _strmService.WriteMediaStrmFileAsync(

@@ -1176,7 +1176,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
     }
 
-    private static bool IsAlreadyInSearchHints(IReadOnlyList<SearchHint> existingHints, TmdbItem tmdbItem, int? prodYear)
+    private static bool IsAlreadyInSearchHints(List<SearchHint> existingHints, TmdbItem tmdbItem, int? prodYear)
     {
         var tmdbTitle = CleanTitleForComparison(tmdbItem.DisplayTitle);
         if (string.IsNullOrWhiteSpace(tmdbTitle))
@@ -1208,7 +1208,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return false;
     }
 
-    private static bool IsAlreadyInQueryItems(IReadOnlyList<BaseItemDto> existingItems, TmdbItem tmdbItem, int? prodYear)
+    private static bool IsAlreadyInQueryItems(List<BaseItemDto> existingItems, TmdbItem tmdbItem, int? prodYear)
     {
         var tmdbTitle = CleanTitleForComparison(tmdbItem.DisplayTitle);
         var tmdbIdStr = tmdbItem.Id.ToString(CultureInfo.InvariantCulture);
