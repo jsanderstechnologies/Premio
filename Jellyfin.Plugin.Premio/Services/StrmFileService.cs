@@ -86,8 +86,8 @@ public sealed partial class StrmFileService
         bool isTvShow = false,
         int seasonNumber = 1,
         int episodeNumber = 1,
-        bool forceOverwrite = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forceOverwrite = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(streamUri);
@@ -438,13 +438,14 @@ public sealed partial class StrmFileService
     /// <param name="isTvShow">Indicates whether the item belongs to a TV show.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The absolute path of the generated file, or null if no directory is configured.</returns>
+    [SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Service instance method used for dependency injection.")]
     public Task<string?> WriteMediaStrmFileAsync(
         string title,
         Uri streamUri,
         bool isTvShow = false,
         CancellationToken cancellationToken = default)
     {
-        return WriteMediaStrmFileAsync(title, null, streamUri, isTvShow, 1, 1, cancellationToken);
+        return WriteMediaStrmFileAsync(title, null, streamUri, isTvShow, 1, 1, cancellationToken, forceOverwrite: true);
     }
 
     /// <summary>

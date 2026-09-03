@@ -137,7 +137,6 @@ public static class PremioMetadataCache
     }
 
     /// <summary>
-    /// <summary>
     /// Attempts to retrieve the cached TMDB item.
     /// </summary>
     /// <param name="id">Item GUID.</param>

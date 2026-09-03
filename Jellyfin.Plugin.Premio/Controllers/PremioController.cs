@@ -335,6 +335,7 @@ public sealed partial class PremioController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "API controller returns HTTP 500 on unexpected faults.")]
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File path is retrieved from trusted library manager BaseItem.")]
     public async Task<IActionResult> AddStream(
         [FromBody] AddStreamRequest request,
         CancellationToken cancellationToken)
