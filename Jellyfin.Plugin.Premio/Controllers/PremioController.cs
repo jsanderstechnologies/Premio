@@ -437,6 +437,7 @@ public sealed partial class PremioController : ControllerBase
                 tvDetails,
                 posterBytes,
                 backdropBytes,
+                _tmdbClient,
                 _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 
@@ -536,6 +537,7 @@ public sealed partial class PremioController : ControllerBase
                 tvDetails,
                 posterBytes,
                 backdropBytes,
+                _tmdbClient,
                 _torrentioClient,
                 cancellationToken).ConfigureAwait(false);
 

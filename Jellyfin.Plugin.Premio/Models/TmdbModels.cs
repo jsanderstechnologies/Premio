@@ -276,3 +276,51 @@ public sealed class TmdbGenre
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// Detailed metadata for a specific TV show season from TMDB.
+/// </summary>
+public sealed class TmdbSeasonDetails
+{
+    /// <summary>Gets the season ID.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    /// <summary>Gets the season number.</summary>
+    [JsonPropertyName("season_number")]
+    public int SeasonNumber { get; init; }
+
+    /// <summary>Gets the season name.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    /// <summary>Gets the season overview.</summary>
+    [JsonPropertyName("overview")]
+    public string? Overview { get; init; }
+
+    /// <summary>Gets the episodes in this season.</summary>
+    [JsonPropertyName("episodes")]
+    public IReadOnlyList<TmdbEpisodeSummary> Episodes { get; init; } = [];
+}
+
+/// <summary>
+/// Summary of a TV episode from TMDB.
+/// </summary>
+public sealed class TmdbEpisodeSummary
+{
+    /// <summary>Gets the episode ID.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    /// <summary>Gets the 1-based episode number.</summary>
+    [JsonPropertyName("episode_number")]
+    public int EpisodeNumber { get; init; }
+
+    /// <summary>Gets the episode title.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    /// <summary>Gets the episode overview.</summary>
+    [JsonPropertyName("overview")]
+    public string? Overview { get; init; }
+}

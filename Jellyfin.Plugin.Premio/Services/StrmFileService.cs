@@ -151,6 +151,7 @@ public sealed partial class StrmFileService
     /// <param name="tvDetails">TMDB detailed item with season metadata.</param>
     /// <param name="posterBytes">Optional poster image bytes.</param>
     /// <param name="backdropBytes">Optional backdrop image bytes.</param>
+    /// <param name="tmdbClient">Optional TMDB client to retrieve season details and episodes.</param>
     /// <param name="torrentioClient">Optional Torrentio client to discover additional or newly aired seasons.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The root directory path of the created show.</returns>
@@ -162,6 +163,7 @@ public sealed partial class StrmFileService
         TmdbDetailedItem tvDetails,
         byte[]? posterBytes = null,
         byte[]? backdropBytes = null,
+        TmdbClient? tmdbClient = null,
         TorrentioClient? torrentioClient = null,
         CancellationToken cancellationToken = default)
     {
@@ -229,40 +231,84 @@ public sealed partial class StrmFileService
             }
         }
 
-        // 2. Probe Torrentio for any newer unannounced/released seasons (e.g. Season 4 when TMDB only has 1-3)
-        if (torrentioClient is not null && !string.IsNullOrWhiteSpace(imdbId))
+        // 2. Discover next seasons directly from TMDB (/tv/{id}/season/{s}) or Torrentio
+        var probeSeason = seasons.Count > 0 ? seasons.Max(s => s.SeasonNumber) + 1 : 1;
+        while (probeSeason <= 30)
         {
-            var probeSeason = seasons.Count > 0 ? seasons.Max(s => s.SeasonNumber) + 1 : 1;
-            while (probeSeason <= 30)
+            TmdbSeasonDetails? tmdbSeason = null;
+            if (tmdbClient is not null && tvDetails.Id > 0)
             {
-                var probeStreams = await torrentioClient.GetSeriesStreamsAsync(imdbId, probeSeason, 1, title, cleanYear, cancellationToken).ConfigureAwait(false);
-                if (probeStreams.Count == 0)
-                {
-                    break;
-                }
+                tmdbSeason = await tmdbClient.GetSeasonDetailsAsync(tvDetails.Id, probeSeason, cancellationToken).ConfigureAwait(false);
+            }
 
-                var defaultEpisodes = seasons.Count > 0 ? seasons[^1].EpisodeCount : 8;
-                var estimatedEpisodes = defaultEpisodes > 0 ? defaultEpisodes : 8;
-
-                for (var i = 0; i < probeStreams.Count; i++)
-                {
-                    var streamTitle = probeStreams[i].Title ?? string.Empty;
-                    var match = Regex.Match(streamTitle, @"(?:из|\/|-E|to\s*E)\s*(\d{1,2})", RegexOptions.IgnoreCase);
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out var parsedCount) && parsedCount is >= 1 and <= 50)
-                    {
-                        estimatedEpisodes = Math.Max(estimatedEpisodes, parsedCount);
-                        break;
-                    }
-                }
-
+            if (tmdbSeason is not null && tmdbSeason.Episodes.Count > 0)
+            {
                 seasons.Add(new TmdbSeasonSummary
                 {
                     SeasonNumber = probeSeason,
-                    EpisodeCount = estimatedEpisodes,
-                    Name = $"Season {probeSeason:D2}"
+                    EpisodeCount = tmdbSeason.Episodes.Count,
+                    Name = !string.IsNullOrWhiteSpace(tmdbSeason.Name) ? tmdbSeason.Name : $"Season {probeSeason:D2}"
                 });
-
                 probeSeason++;
+                continue;
+            }
+
+            // Fallback: check Torrentio
+            if (torrentioClient is not null && !string.IsNullOrWhiteSpace(imdbId))
+            {
+                var probeStreams = await torrentioClient.GetSeriesStreamsAsync(imdbId, probeSeason, 1, title, cleanYear, cancellationToken).ConfigureAwait(false);
+                if (probeStreams.Count > 0)
+                {
+                    var defaultEpisodes = seasons.Count > 0 ? seasons[^1].EpisodeCount : 8;
+                    var estimatedEpisodes = defaultEpisodes > 0 ? defaultEpisodes : 8;
+
+                    for (var i = 0; i < probeStreams.Count; i++)
+                    {
+                        var streamTitle = probeStreams[i].Title ?? string.Empty;
+                        var match = Regex.Match(streamTitle, @"(?:из|\/|-E|to\s*E)\s*(\d{1,2})", RegexOptions.IgnoreCase);
+                        if (match.Success && int.TryParse(match.Groups[1].Value, out var parsedCount) && parsedCount is >= 1 and <= 50)
+                        {
+                            estimatedEpisodes = Math.Max(estimatedEpisodes, parsedCount);
+                            break;
+                        }
+                    }
+
+                    seasons.Add(new TmdbSeasonSummary
+                    {
+                        SeasonNumber = probeSeason,
+                        EpisodeCount = estimatedEpisodes,
+                        Name = $"Season {probeSeason:D2}"
+                    });
+                    probeSeason++;
+                    continue;
+                }
+            }
+
+            // No further seasons found on TMDB or Torrentio
+            break;
+        }
+
+        // 3. For any season with episode_count <= 1, query TMDB season endpoint to get exact episode count
+        if (tmdbClient is not null && tvDetails.Id > 0)
+        {
+            for (var i = 0; i < seasons.Count; i++)
+            {
+                if (seasons[i].EpisodeCount <= 1)
+                {
+                    var details = await tmdbClient.GetSeasonDetailsAsync(tvDetails.Id, seasons[i].SeasonNumber, cancellationToken).ConfigureAwait(false);
+                    if (details is not null && details.Episodes.Count > seasons[i].EpisodeCount)
+                    {
+                        seasons[i] = new TmdbSeasonSummary
+                        {
+                            Id = seasons[i].Id,
+                            SeasonNumber = seasons[i].SeasonNumber,
+                            EpisodeCount = details.Episodes.Count,
+                            Name = seasons[i].Name,
+                            Overview = seasons[i].Overview,
+                            PosterPath = seasons[i].PosterPath
+                        };
+                    }
+                }
             }
         }
 

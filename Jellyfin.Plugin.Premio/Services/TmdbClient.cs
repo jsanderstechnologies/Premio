@@ -172,6 +172,33 @@ public sealed partial class TmdbClient
         }
     }
 
+    /// <summary>
+    /// Retrieves detailed season metadata including all episodes for a specific TV show season.
+    /// </summary>
+    /// <param name="tvId">TMDB TV show ID.</param>
+    /// <param name="seasonNumber">Season number.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Season details with episode list, or null.</returns>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Season details fetch is optional; returns null on error.")]
+    public async Task<TmdbSeasonDetails?> GetSeasonDetailsAsync(
+        int tvId,
+        int seasonNumber,
+        CancellationToken cancellationToken = default)
+    {
+        var url = $"tv/{tvId}/season/{seasonNumber}?api_key={ApiKey}";
+        try
+        {
+            return await _http
+                .GetFromJsonAsync<TmdbSeasonDetails>(url, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogSeasonDetailsFetchFailed(_logger, tvId, seasonNumber, ex.Message);
+            return null;
+        }
+    }
+
     // -------------------------------------------------------------------------
     // LoggerMessage delegates (CA1848)
     // -------------------------------------------------------------------------
@@ -193,4 +220,7 @@ public sealed partial class TmdbClient
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to download poster from '{Uri}': {ErrorMessage}")]
     private static partial void LogImageDownloadFailed(ILogger logger, string uri, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Premio: Failed to fetch TMDB season {SeasonNumber} for TV show {TvId}: {ErrorMessage}")]
+    private static partial void LogSeasonDetailsFetchFailed(ILogger logger, int tvId, int seasonNumber, string errorMessage);
 }
