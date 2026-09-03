@@ -1131,6 +1131,361 @@ public sealed partial class PremioController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Gets available streams for a specific episode in the library and whether a stream is currently chosen.
+    /// </summary>
+    /// <param name="itemId">Episode item GUID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>JSON stream information.</returns>
+    [HttpGet("EpisodeStreams")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [AllowAnonymous]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Action returns 500 on unexpected errors.")]
+    public async Task<IActionResult> GetEpisodeStreams(
+        [FromQuery] Guid itemId,
+        CancellationToken cancellationToken)
+    {
+        if (itemId == Guid.Empty)
+        {
+            return BadRequest(new { message = "itemId is required." });
+        }
+
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is null)
+        {
+            return NotFound(new { message = "Episode item not found." });
+        }
+
+        if (item is not MediaBrowser.Controller.Entities.TV.Episode episode)
+        {
+            return BadRequest(new { message = "Item is not an Episode." });
+        }
+
+        var seasonNumber = episode.ParentIndexNumber ?? 1;
+        var episodeNumber = episode.IndexNumber ?? 1;
+        var showTitle = episode.SeriesName;
+        string? showYear = null;
+        string? imdbId = null;
+
+        var series = episode.Series;
+        if (series is not null)
+        {
+            showTitle ??= series.Name;
+            showYear = series.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+            if (series.ProviderIds is not null)
+            {
+                series.ProviderIds.TryGetValue("Imdb", out imdbId);
+                if (string.IsNullOrWhiteSpace(imdbId) && series.ProviderIds.TryGetValue("Tmdb", out var tmdbIdStr) && int.TryParse(tmdbIdStr, out var tmdbId))
+                {
+                    imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(showTitle))
+        {
+            showTitle = episode.Name;
+        }
+
+        if (string.IsNullOrWhiteSpace(imdbId))
+        {
+            var searchResults = await _tmdbClient.SearchMultiAsync(showTitle, cancellationToken).ConfigureAwait(false);
+            TmdbItem? match = null;
+            for (var k = 0; k < searchResults.Count; k++)
+            {
+                if (string.Equals(searchResults[k].MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+                {
+                    match = searchResults[k];
+                    break;
+                }
+            }
+
+            match ??= searchResults.Count > 0 ? searchResults[0] : null;
+            if (match is not null)
+            {
+                imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", match.Id, cancellationToken).ConfigureAwait(false);
+                showYear ??= match.Year;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(imdbId))
+        {
+            return Ok(new
+            {
+                hasChosenStream = false,
+                currentHash = string.Empty,
+                title = showTitle,
+                year = showYear,
+                season = seasonNumber,
+                episode = episodeNumber,
+                streams = Array.Empty<object>()
+            });
+        }
+
+        // Check if .strm file has a chosen stream
+        var hasChosenStream = false;
+        var currentHash = string.Empty;
+        if (!string.IsNullOrWhiteSpace(episode.Path) && System.IO.File.Exists(episode.Path))
+        {
+            var strmContent = await System.IO.File.ReadAllTextAsync(episode.Path, cancellationToken).ConfigureAwait(false);
+            var isConfigured = (strmContent.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || strmContent.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !strmContent.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase)
+                || strmContent.Contains("infoHash=", StringComparison.OrdinalIgnoreCase);
+
+            if (isConfigured)
+            {
+                hasChosenStream = true;
+                var matchHash = System.Text.RegularExpressions.Regex.Match(strmContent, "[a-fA-F0-9]{40}");
+                if (matchHash.Success)
+                {
+                    currentHash = matchHash.Value;
+                }
+            }
+        }
+
+        // Fetch Torrentio streams
+        var streams = await _torrentioClient.GetSeriesStreamsAsync(imdbId, seasonNumber, episodeNumber, showTitle, showYear, cancellationToken).ConfigureAwait(false);
+
+        // Check cache on hashes
+        var hashes = new List<string>();
+        for (var i = 0; i < streams.Count; i++)
+        {
+            var h = streams[i].InfoHash;
+            if (!string.IsNullOrWhiteSpace(h) && !hashes.Contains(h, StringComparer.OrdinalIgnoreCase))
+            {
+                hashes.Add(h);
+            }
+        }
+
+        if (hashes.Count > 0)
+        {
+            var cacheResults = await _premiumizeClient.CheckCacheAsync(hashes, cancellationToken).ConfigureAwait(false);
+            if (cacheResults.Count == hashes.Count)
+            {
+                var cacheMap = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                for (var i = 0; i < hashes.Count; i++)
+                {
+                    cacheMap[hashes[i]] = cacheResults[i];
+                }
+
+                for (var i = 0; i < streams.Count; i++)
+                {
+                    if (cacheMap.TryGetValue(streams[i].InfoHash, out var isCached))
+                    {
+                        streams[i].IsCached = isCached;
+                    }
+                }
+            }
+        }
+
+        var sorted = streams
+            .OrderByDescending(s => s.IsCached)
+            .ThenByDescending(s => s.Seeders)
+            .Select(s => new
+            {
+                infoHash = s.InfoHash,
+                cleanReleaseName = s.CleanReleaseName,
+                fileSize = s.FileSize,
+                seeders = s.Seeders,
+                isCached = s.IsCached
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            hasChosenStream,
+            currentHash,
+            title = showTitle,
+            year = showYear,
+            season = seasonNumber,
+            episode = episodeNumber,
+            streams = sorted
+        });
+    }
+
+    /// <summary>
+    /// Serves client-side JavaScript for injecting stream dropdowns directly onto episode cards in Jellyfin Web.
+    /// </summary>
+    /// <returns>JavaScript response.</returns>
+    [HttpGet("Web/premio.js")]
+    [Produces("application/javascript")]
+    [AllowAnonymous]
+    public IActionResult GetPremioClientScript()
+    {
+        const string js = """
+            (function() {
+                console.log('[Premio] Client script loaded.');
+
+                const initializedEpisodes = new Set();
+
+                function scanAndInject() {
+                    const items = document.querySelectorAll('.listItem, .card');
+                    for (let i = 0; i < items.length; i++) {
+                        const item = items[i];
+                        const id = item.getAttribute('data-id') || item.getAttribute('data-itemid') || (item.dataset ? item.dataset.id : null);
+                        if (!id || initializedEpisodes.has(id)) {
+                            continue;
+                        }
+
+                        const type = item.getAttribute('data-type') || (item.dataset ? item.dataset.type : null);
+                        const isEpisode = type === 'Episode' || item.closest('.episodesList') || item.closest('#childrenItems') || item.querySelector('.listItem-indexnumber') || item.querySelector('.episodeTitle');
+                        if (!isEpisode) {
+                            continue;
+                        }
+
+                        initializedEpisodes.add(id);
+                        injectDropdown(item, id);
+                    }
+                }
+
+                async function injectDropdown(cardEl, itemId) {
+                    const playBtn = cardEl.querySelector('button[data-action="play"], .cardOverlayButton-br, .listItemImageButton');
+                    const mountPoint = cardEl.querySelector('.listItem-content, .cardText, .listItem-bottomoverview, .cardContent') || cardEl;
+
+                    const wrap = document.createElement('div');
+                    wrap.className = 'premio-card-stream-wrap';
+                    wrap.style.cssText = 'display:flex; align-items:center; gap:6px; margin:6px 0; font-size:12px; z-index:10; position:relative; flex-wrap:wrap;';
+
+                    const label = document.createElement('span');
+                    label.style.cssText = 'font-weight:700; color:#00a4dc; text-transform:uppercase; font-size:10px; letter-spacing:0.5px;';
+                    label.textContent = 'Stream:';
+
+                    const select = document.createElement('select');
+                    select.className = 'emby-select emby-select-withcolor';
+                    select.style.cssText = 'font-size:11px; padding:3px 6px; border-radius:4px; background:#1c1c1c; color:#fff; border:1px solid #444; max-width:280px; text-overflow:ellipsis; cursor:pointer;';
+                    select.innerHTML = '<option value="">Loading streams...</option>';
+
+                    const status = document.createElement('span');
+                    status.style.cssText = 'font-size:11px; font-weight:600;';
+
+                    wrap.appendChild(label);
+                    wrap.appendChild(select);
+                    wrap.appendChild(status);
+
+                    wrap.addEventListener('click', (e) => e.stopPropagation());
+                    wrap.addEventListener('mousedown', (e) => e.stopPropagation());
+
+                    mountPoint.appendChild(wrap);
+
+                    try {
+                        const res = await fetch(`/Premio/EpisodeStreams?itemId=${encodeURIComponent(itemId)}`);
+                        if (!res.ok) {
+                            wrap.remove();
+                            return;
+                        }
+                        const data = await res.json();
+                        if (!data.streams || data.streams.length === 0) {
+                            select.innerHTML = '<option value="">No streams found</option>';
+                            select.disabled = true;
+                            if (playBtn) {
+                                playBtn.style.opacity = '0.3';
+                                playBtn.style.pointerEvents = 'none';
+                            }
+                            return;
+                        }
+
+                        select.innerHTML = '';
+                        if (!data.hasChosenStream) {
+                            const defOpt = document.createElement('option');
+                            defOpt.value = '';
+                            defOpt.textContent = '-- Choose a Stream --';
+                            defOpt.selected = true;
+                            select.appendChild(defOpt);
+
+                            if (playBtn) {
+                                playBtn.style.opacity = '0.3';
+                                playBtn.style.pointerEvents = 'none';
+                                playBtn.title = 'Select a stream from the dropdown first';
+                            }
+                        } else {
+                            if (playBtn) {
+                                playBtn.style.opacity = '1';
+                                playBtn.style.pointerEvents = 'auto';
+                                playBtn.title = 'Play';
+                            }
+                        }
+
+                        for (let k = 0; k < data.streams.length; k++) {
+                            const s = data.streams[k];
+                            const opt = document.createElement('option');
+                            opt.value = s.infoHash;
+                            const cacheMark = s.isCached ? '⚡' : '⏳';
+                            const sizeStr = s.fileSize ? ` (${s.fileSize})` : '';
+                            opt.textContent = `[${cacheMark}] ${s.cleanReleaseName}${sizeStr}`;
+                            if (data.currentHash && s.infoHash.toLowerCase() === data.currentHash.toLowerCase()) {
+                                opt.selected = true;
+                            }
+                            select.appendChild(opt);
+                        }
+
+                        select.addEventListener('change', async (e) => {
+                            const chosenHash = e.target.value;
+                            if (!chosenHash) return;
+
+                            status.textContent = 'Saving...';
+                            status.style.color = '#f59e0b';
+                            select.disabled = true;
+
+                            try {
+                                const saveRes = await fetch('/Premio/AddStream', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        title: data.title,
+                                        year: data.year,
+                                        isTv: true,
+                                        season: data.season,
+                                        episode: data.episode,
+                                        infoHash: chosenHash
+                                    })
+                                });
+
+                                const saveJson = await saveRes.json();
+                                if (saveRes.ok && saveJson.success) {
+                                    status.textContent = '✓ Saved!';
+                                    status.style.color = '#10b981';
+                                    if (playBtn) {
+                                        playBtn.style.opacity = '1';
+                                        playBtn.style.pointerEvents = 'auto';
+                                        playBtn.title = 'Play';
+                                    }
+                                    const placeholder = select.querySelector('option[value=""]');
+                                    if (placeholder) placeholder.remove();
+                                } else {
+                                    status.textContent = 'Error';
+                                    status.style.color = '#ef4444';
+                                }
+                            } catch (err) {
+                                status.textContent = 'Error';
+                                status.style.color = '#ef4444';
+                            } finally {
+                                select.disabled = false;
+                            }
+                        });
+
+                    } catch (err) {
+                        wrap.remove();
+                    }
+                }
+
+                let debounceTimer;
+                const observer = new MutationObserver(() => {
+                    clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(scanAndInject, 250);
+                });
+
+                observer.observe(document.body, { childList: true, subtree: true });
+                window.addEventListener('hashchange', () => setTimeout(scanAndInject, 400));
+                window.addEventListener('popstate', () => setTimeout(scanAndInject, 400));
+
+                setTimeout(scanAndInject, 500);
+            })();
+            """;
+
+        return Content(js, "application/javascript", Encoding.UTF8);
+    }
+
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"

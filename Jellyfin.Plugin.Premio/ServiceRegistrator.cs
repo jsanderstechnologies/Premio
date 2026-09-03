@@ -36,5 +36,8 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
 
         // Scheduled task for background cloud storage synchronization
         serviceCollection.AddSingleton<IScheduledTask, SyncPremiumizeTask>();
+
+        // Web client injection startup filter
+        serviceCollection.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter, PremioStartupFilter>();
     }
 }
