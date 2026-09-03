@@ -356,10 +356,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (item.Id == 0 && !string.IsNullOrWhiteSpace(item.Title))
         {
             var searchResults = await _tmdbClient.SearchMultiAsync(item.Title, cancellationToken).ConfigureAwait(false);
-            var match = searchResults.FirstOrDefault(r => isTv
-                ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase)) ?? searchResults.FirstOrDefault();
-
+            var match = FindMatchingItem(searchResults, isTv);
             if (match is not null)
             {
                 item = match;
@@ -501,9 +498,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (string.IsNullOrWhiteSpace(imdbId))
             {
                 var searchResults = await _tmdbClient.SearchMultiAsync(itemDto.Name, cancellationToken).ConfigureAwait(false);
-                var match = searchResults.FirstOrDefault(r => isTv
-                    ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                    : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase));
+                var match = FindMatchingItem(searchResults, isTv);
 
                 if (match is not null)
                 {
@@ -666,9 +661,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (string.IsNullOrWhiteSpace(imdbId))
             {
                 var searchResults = await _tmdbClient.SearchMultiAsync(item.DisplayTitle, cancellationToken).ConfigureAwait(false);
-                var match = searchResults.FirstOrDefault(r => isTv
-                    ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
-                    : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase));
+                var match = FindMatchingItem(searchResults, isTv);
 
                 if (match is not null)
                 {
@@ -1095,6 +1088,25 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         return new QueryResult<BaseItemDto>(0, existingItems.Count, existingItems);
+    }
+
+    private static TmdbItem? FindMatchingItem(IReadOnlyList<TmdbItem> results, bool isTv)
+    {
+        for (var i = 0; i < results.Count; i++)
+        {
+            var item = results[i];
+            if (isTv && string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
+
+            if (!isTv && string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase))
+            {
+                return item;
+            }
+        }
+
+        return results.Count > 0 ? results[0] : null;
     }
 
     private static (BaseItemKind Kind, MediaType MediaType, bool IsFolder, bool IsPerson) ResolveMediaTypes(
