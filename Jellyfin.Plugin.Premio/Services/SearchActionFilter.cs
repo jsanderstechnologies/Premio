@@ -186,7 +186,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         if (HttpMethods.IsGet(context.HttpContext.Request.Method))
         {
             var requestedId = ExtractItemId(context);
-            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null && cachedItem.Id > 0)
+            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
             {
                 if (requestPath.Contains("/Intros", StringComparison.OrdinalIgnoreCase) ||
                     requestPath.Contains("/Similar", StringComparison.OrdinalIgnoreCase) ||
@@ -353,9 +353,24 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     {
         var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
 
+        if (item.Id == 0 && !string.IsNullOrWhiteSpace(item.Title))
+        {
+            var searchResults = await _tmdbClient.SearchMultiAsync(item.Title, cancellationToken).ConfigureAwait(false);
+            var match = searchResults.FirstOrDefault(r => isTv
+                ? string.Equals(r.MediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                : string.Equals(r.MediaType, "movie", StringComparison.OrdinalIgnoreCase)) ?? searchResults.FirstOrDefault();
+
+            if (match is not null)
+            {
+                item = match;
+            }
+        }
+
         // 1. Fetch rich TMDB details & IMDB external ID
-        var details = await _tmdbClient.GetDetailsAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
-        var imdbId = details?.ImdbId ?? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false);
+        var details = item.Id > 0
+            ? await _tmdbClient.GetDetailsAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false)
+            : null;
+        var imdbId = details?.ImdbId ?? (item.Id > 0 ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false) : null);
 
         // 2. Fetch Torrentio streams
         IReadOnlyList<TorrentioStreamResult> streams = Array.Empty<TorrentioStreamResult>();
@@ -742,7 +757,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         TmdbItem item,
         CancellationToken cancellationToken)
     {
-        var mediaSourceId = ExtractMediaSourceId(context) ?? "select_stream";
+        var rawMediaSourceId = ExtractMediaSourceId(context);
         var streamUrl = await ResolveDirectStreamUrlAsync(context, item, cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(streamUrl))
@@ -750,13 +765,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             return null;
         }
 
+        var sourceId = !string.IsNullOrWhiteSpace(rawMediaSourceId) ? rawMediaSourceId : requestedId.ToString("N");
+
         return new PlaybackInfoResponse
         {
             MediaSources = new[]
             {
                 new MediaSourceInfo
                 {
-                    Id = mediaSourceId,
+                    Id = sourceId,
                     Path = streamUrl,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
