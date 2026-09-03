@@ -142,9 +142,10 @@ public sealed partial class PremioController : ControllerBase
                 1,
                 cancellationToken).ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(strmPath) && cachedItem.PosterUrl is not null)
+            var posterUrl = cachedItem?.PosterUrl;
+            if (!string.IsNullOrWhiteSpace(strmPath) && posterUrl is not null)
             {
-                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(cachedItem.PosterUrl, cancellationToken).ConfigureAwait(false);
+                var posterBytes = await _tmdbClient.DownloadImageBytesAsync(posterUrl, cancellationToken).ConfigureAwait(false);
                 if (posterBytes is not null && posterBytes.Length > 0)
                 {
                     await _strmService.SavePosterImageAsync(strmPath, posterBytes, cancellationToken).ConfigureAwait(false);
