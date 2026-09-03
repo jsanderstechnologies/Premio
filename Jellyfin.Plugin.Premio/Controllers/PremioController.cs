@@ -496,6 +496,9 @@ public sealed partial class PremioController : ControllerBase
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl}")]
     private static partial void LogStreamResolved(ILogger logger, string title, string infoHash, string streamUrl);
 
+    [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Stream resolution failed for '{Guid}': {ErrorMessage}")]
+    private static partial void LogStreamResolutionFailed(ILogger logger, Guid guid, string errorMessage);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Failed to add stream for '{Title}': {ErrorMessage}")]
     private static partial void LogAddStreamFailed(ILogger logger, string title, string errorMessage);
 }

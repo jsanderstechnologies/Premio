@@ -146,6 +146,8 @@ public sealed partial class TorrentioClient
         string? expectedYear,
         bool onlyX264 = true)
     {
+        ArgumentNullException.ThrowIfNull(streams);
+
         if (streams.Count == 0)
         {
             return streams;

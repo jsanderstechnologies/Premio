@@ -164,6 +164,8 @@ public sealed partial class StrmFileService
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentException.ThrowIfNullOrWhiteSpace(imdbId);
+        ArgumentNullException.ThrowIfNull(tvDetails);
 
         var targetDir = string.IsNullOrWhiteSpace(Config.TvShowsStrmDirectory)
             ? Config.StrmOutputDirectory
