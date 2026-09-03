@@ -347,7 +347,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // 4. Enrich existing library item details with Torrentio stream version dropdown
         // ---------------------------------------------------------------------
         if (executedContext.Result is ObjectResult objResult && objResult.Value is BaseItemDto libraryDto &&
-            (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Series || libraryDto.Type == BaseItemKind.Episode))
+            (libraryDto.Type == BaseItemKind.Movie || libraryDto.Type == BaseItemKind.Episode))
         {
             await EnrichExistingLibraryItemDtoAsync(libraryDto, cancellationToken).ConfigureAwait(false);
             return;
@@ -514,7 +514,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             Name = displayTitle,
             OriginalTitle = details?.Title ?? item.Title,
             Overview = details?.Overview ?? item.Overview,
-            Taglines = !string.IsNullOrWhiteSpace(details?.Tagline) ? new[] { details.Tagline } : (isTv ? new[] { "Premio: Add to Library to watch seasons & episodes" } : Array.Empty<string>()),
+            Taglines = !string.IsNullOrWhiteSpace(details?.Tagline) ? new[] { details.Tagline } : (isTv ? new[] { "Premio: Click ➕ Add to Library below to import all seasons & episodes" } : Array.Empty<string>()),
             Genres = details?.Genres?.Select(g => g.Name).ToArray() ?? Array.Empty<string>(),
             CommunityRating = details is not null ? (float)details.VoteAverage : (float)item.VoteAverage,
             RunTimeTicks = details?.Runtime > 0 ? TimeSpan.FromMinutes(details.Runtime.Value).Ticks : null,
@@ -526,12 +526,22 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             PrimaryImageAspectRatio = 2.0 / 3.0,
             ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
-            MediaSources = mediaSources.ToArray(),
+            MediaSources = isTv ? Array.Empty<MediaSourceInfo>() : mediaSources.ToArray(),
             LocationType = LocationType.FileSystem,
             MediaStreams = isTv ? Array.Empty<MediaStream>() : defaultStreams,
             People = Array.Empty<BaseItemPerson>(),
             RemoteTrailers = Array.Empty<MediaUrl>(),
-            ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } }
+            ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } },
+            ExternalUrls = isTv
+                ? new[]
+                {
+                    new ExternalUrl
+                    {
+                        Name = "➕ Add to Library",
+                        Url = $"/Premio/Web/AddShowAndRedirect?tmdbId={item.Id}&imdbId={imdbId ?? string.Empty}&title={Uri.EscapeDataString(displayTitle)}&year={yearStr ?? string.Empty}"
+                    }
+                }
+                : Array.Empty<ExternalUrl>()
         };
 
         return dto;
@@ -542,7 +552,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     {
         try
         {
-            var isTv = itemDto.Type == BaseItemKind.Series || itemDto.Type == BaseItemKind.Episode;
+            if (itemDto.Type == BaseItemKind.Series)
+            {
+                return;
+            }
+
+            var isTv = itemDto.Type == BaseItemKind.Episode;
             string? imdbId = null;
 
             if (itemDto.ProviderIds is not null)

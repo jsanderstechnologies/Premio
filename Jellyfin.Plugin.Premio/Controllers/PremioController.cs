@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Premio.Models;
 using Jellyfin.Plugin.Premio.Services;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -28,6 +30,7 @@ public sealed partial class PremioController : ControllerBase
     private readonly TorrentioClient _torrentioClient;
     private readonly PremiumizeClient _premiumizeClient;
     private readonly StrmFileService _strmService;
+    private readonly ILibraryManager _libraryManager;
     private readonly ILogger<PremioController> _logger;
 
     /// <summary>
@@ -37,18 +40,21 @@ public sealed partial class PremioController : ControllerBase
     /// <param name="torrentioClient">Torrentio HTTP client.</param>
     /// <param name="premiumizeClient">Premiumize HTTP client.</param>
     /// <param name="strmService">STRM file service.</param>
+    /// <param name="libraryManager">Library manager.</param>
     /// <param name="logger">Logger.</param>
     public PremioController(
         TmdbClient tmdbClient,
         TorrentioClient torrentioClient,
         PremiumizeClient premiumizeClient,
         StrmFileService strmService,
+        ILibraryManager libraryManager,
         ILogger<PremioController> logger)
     {
         _tmdbClient = tmdbClient;
         _torrentioClient = torrentioClient;
         _premiumizeClient = premiumizeClient;
         _strmService = strmService;
+        _libraryManager = libraryManager;
         _logger = logger;
     }
 
@@ -452,6 +458,179 @@ public sealed partial class PremioController : ControllerBase
         {
             LogAddStreamFailed(_logger, request.Title, ex.Message);
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Adds an entire TV show into the Jellyfin library and renders an HTML page that redirects
+    /// the browser back to the newly created library series details page.
+    /// </summary>
+    /// <param name="tmdbId">TMDB item ID.</param>
+    /// <param name="imdbId">Optional IMDB ID.</param>
+    /// <param name="title">Show title.</param>
+    /// <param name="year">Optional show release year.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>HTML page with automatic redirect.</returns>
+    [HttpGet("Web/AddShowAndRedirect")]
+    [Produces("text/html")]
+    [AllowAnonymous]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Redirect action returns readable error page if exception occurs.")]
+    public async Task<IActionResult> AddShowAndRedirect(
+        [FromQuery] int tmdbId,
+        [FromQuery] string? imdbId,
+        [FromQuery] string title,
+        [FromQuery] string? year,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var tvDetails = tmdbId > 0
+                ? await _tmdbClient.GetDetailsAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false)
+                : null;
+
+            var cleanTitle = !string.IsNullOrWhiteSpace(title)
+                ? title
+                : (tvDetails?.DisplayTitle ?? "Unknown Show");
+
+            var cleanYear = !string.IsNullOrWhiteSpace(year)
+                ? year
+                : tvDetails?.Year;
+
+            var resolvedImdbId = imdbId ?? tvDetails?.ImdbId;
+            if (string.IsNullOrWhiteSpace(resolvedImdbId) && tmdbId > 0)
+            {
+                resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", tmdbId, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(resolvedImdbId))
+            {
+                resolvedImdbId = $"premio_tv_{tmdbId}";
+            }
+
+            byte[]? posterBytes = null;
+            if (tvDetails?.PosterUrl is not null)
+            {
+                posterBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.PosterUrl, cancellationToken).ConfigureAwait(false);
+            }
+
+            byte[]? backdropBytes = null;
+            if (tvDetails?.BackdropUrl is not null)
+            {
+                backdropBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.BackdropUrl, cancellationToken).ConfigureAwait(false);
+            }
+
+            tvDetails ??= new TmdbDetailedItem
+            {
+                Id = tmdbId,
+                Name = cleanTitle,
+                NumberOfEpisodes = 10,
+                NumberOfSeasons = 1,
+                Seasons = [new TmdbSeasonSummary { SeasonNumber = 1, EpisodeCount = 10 }]
+            };
+
+            await _strmService.CreateTvShowSeriesStructureAsync(
+                cleanTitle,
+                cleanYear,
+                resolvedImdbId,
+                tvDetails,
+                posterBytes,
+                backdropBytes,
+                cancellationToken).ConfigureAwait(false);
+
+            Guid foundSeriesId = Guid.Empty;
+            for (var i = 0; i < 6; i++)
+            {
+                var query = new InternalItemsQuery
+                {
+                    SearchTerm = cleanTitle
+                };
+                var items = _libraryManager.GetItemList(query);
+                for (var j = 0; j < items.Count; j++)
+                {
+                    if (items[j] is MediaBrowser.Controller.Entities.TV.Series)
+                    {
+                        foundSeriesId = items[j].Id;
+                        break;
+                    }
+                }
+
+                if (foundSeriesId != Guid.Empty)
+                {
+                    break;
+                }
+
+                await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+            }
+
+            var seriesIdStr = foundSeriesId != Guid.Empty ? foundSeriesId.ToString("N") : string.Empty;
+
+            var html = $$"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <title>Added to Library</title>
+                    <style>
+                        body {
+                            background-color: #101010;
+                            color: #ffffff;
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            height: 100vh;
+                            margin: 0;
+                            text-align: center;
+                        }
+                        .card {
+                            background: #1c1c1c;
+                            padding: 40px 60px;
+                            border-radius: 12px;
+                            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+                            max-width: 500px;
+                        }
+                        .spinner {
+                            border: 4px solid rgba(255,255,255,0.1);
+                            width: 48px;
+                            height: 48px;
+                            border-radius: 50%;
+                            border-left-color: #00a4dc;
+                            animation: spin 1s linear infinite;
+                            margin: 0 auto 20px auto;
+                        }
+                        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <div class="spinner"></div>
+                        <h2>Added to Library!</h2>
+                        <p>Opening show in your Jellyfin Library...</p>
+                    </div>
+                    <script>
+                        var seriesId = '{{seriesIdStr}}';
+                        var targetHash = seriesId ? '#/details?id=' + seriesId : '#/home.html';
+                        if (window.opener && !window.opener.closed) {
+                            try {
+                                window.opener.location.hash = targetHash;
+                                window.close();
+                            } catch (e) {
+                                window.location.href = '/web/index.html' + targetHash;
+                            }
+                        } else {
+                            window.location.href = '/web/index.html' + targetHash;
+                        }
+                    </script>
+                </body>
+                </html>
+                """;
+
+            return Content(html, "text/html");
+        }
+        catch (Exception ex)
+        {
+            LogAddStreamFailed(_logger, title, ex.Message);
+            return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
         }
     }
 
