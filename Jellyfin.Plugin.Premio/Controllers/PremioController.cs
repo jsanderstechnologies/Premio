@@ -91,6 +91,7 @@ public sealed partial class PremioController : ControllerBase
     [HttpHead("Stream")]
     [AllowAnonymous]
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Stream resolution errors return appropriate HTTP status.")]
+    [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for hash extraction.")]
     public async Task<IActionResult> Stream(
         [FromRoute] Guid? itemId,
         [FromQuery] string? mediaSourceId,
@@ -125,6 +126,58 @@ public sealed partial class PremioController : ControllerBase
         }
 
         var isRealInfoHash = !string.IsNullOrWhiteSpace(targetHash) && targetHash.Length == 40 && !string.Equals(targetHash, requestedGuid.ToString("N"), StringComparison.OrdinalIgnoreCase);
+
+        if (!isRealInfoHash && requestedGuid != Guid.Empty)
+        {
+            var libItem = _libraryManager.GetItemById(requestedGuid);
+            if (libItem is Episode ep)
+            {
+                var sNum = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? (season ?? 1));
+                var epNum = ep.IndexNumber ?? (episode ?? 1);
+                var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? title;
+                if (!string.IsNullOrWhiteSpace(showTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(showTitle, sNum, epNum, out var chosenHash))
+                {
+                    targetHash = chosenHash;
+                    isRealInfoHash = true;
+                }
+            }
+
+            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
+            {
+                try
+                {
+                    var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
+                    var trimmed = fileContent?.Trim() ?? string.Empty;
+                    if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return Redirect(trimmed);
+                        }
+
+                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                        if (hashMatch.Success)
+                        {
+                            targetHash = hashMatch.Groups[1].Value;
+                            isRealInfoHash = true;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore file read exceptions
+                }
+            }
+        }
+
+        if (!isRealInfoHash && season.HasValue && episode.HasValue && !string.IsNullOrWhiteSpace(title))
+        {
+            if (PremioMetadataCache.TryGetChosenEpisodeStream(title, season.Value, episode.Value, out var chosenHash))
+            {
+                targetHash = chosenHash;
+                isRealInfoHash = true;
+            }
+        }
 
         if (!isRealInfoHash)
         {
@@ -334,6 +387,7 @@ public sealed partial class PremioController : ControllerBase
     [HttpPost("AddStream")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [AllowAnonymous]
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "API controller returns HTTP 500 on unexpected faults.")]
     [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File path is retrieved from trusted library manager BaseItem.")]
     public async Task<IActionResult> AddStream(
@@ -357,24 +411,25 @@ public sealed partial class PremioController : ControllerBase
             var src = !string.IsNullOrWhiteSpace(request.InfoHash) ? request.InfoHash : request.MagnetUrl!.OriginalString;
             _ = _premiumizeClient.CreateTransferAsync(src, cancellationToken);
 
-            var streamUrl = request.IsTv && request.Season.HasValue && request.Episode.HasValue
-                ? $"/Premio/Stream?type=tv&title={Uri.EscapeDataString(request.Title)}&year={Uri.EscapeDataString(request.Year ?? string.Empty)}&season={request.Season.Value}&episode={request.Episode.Value}&infoHash={Uri.EscapeDataString(request.InfoHash ?? string.Empty)}"
-                : (!string.IsNullOrWhiteSpace(request.InfoHash) ? $"/Premio/Stream?infoHash={Uri.EscapeDataString(request.InfoHash)}&title={Uri.EscapeDataString(request.Title)}" : null);
+            var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
+            var directStreamUrl = ResolvePlayableStreamUrl(directDl);
 
-            if (string.IsNullOrWhiteSpace(streamUrl))
-            {
-                var directDl = await _premiumizeClient.CreateDirectDownloadAsync(src, cancellationToken).ConfigureAwait(false);
-                streamUrl = ResolvePlayableStreamUrl(directDl);
-            }
+            var host = Request.Host.HasValue ? Request.Host.Value : "127.0.0.1:8096";
+            var scheme = Request.Scheme ?? "http";
+            var loopbackUrl = request.IsTv && request.Season.HasValue && request.Episode.HasValue
+                ? $"{scheme}://{host}/Premio/Stream?type=tv&title={Uri.EscapeDataString(request.Title)}&year={Uri.EscapeDataString(request.Year ?? string.Empty)}&season={request.Season.Value}&episode={request.Episode.Value}&infoHash={Uri.EscapeDataString(request.InfoHash ?? string.Empty)}"
+                : $"{scheme}://{host}/Premio/Stream?infoHash={Uri.EscapeDataString(request.InfoHash ?? src)}&title={Uri.EscapeDataString(request.Title)}";
 
-            if (string.IsNullOrWhiteSpace(streamUrl))
-            {
-                streamUrl = $"/Premio/Stream?infoHash={Uri.EscapeDataString(request.InfoHash ?? src)}&title={Uri.EscapeDataString(request.Title)}";
-            }
+            var streamUrl = directStreamUrl ?? loopbackUrl;
 
             if (request.IsTv && request.Season.HasValue && request.Episode.HasValue && !string.IsNullOrWhiteSpace(request.InfoHash))
             {
                 PremioMetadataCache.RegisterChosenEpisodeStream(request.Title, request.Season.Value, request.Episode.Value, request.InfoHash);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var itemGuid) && !string.IsNullOrWhiteSpace(request.InfoHash))
+            {
+                PremioMetadataCache.RegisterStreamHash(itemGuid, request.InfoHash);
             }
 
             // Construct clean media filename

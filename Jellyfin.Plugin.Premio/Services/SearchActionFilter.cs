@@ -781,6 +781,20 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     SupportsTranscoding = true,
                     MediaStreams = defaultStreams.ToList()
                 });
+            if (hasRealChosenStream)
+            {
+                mediaSources.RemoveAll(m => m.Name == "Select a Stream" || m.Path.Contains("select_stream", StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrWhiteSpace(chosenInfoHash))
+                {
+                    var chosenIdx = mediaSources.FindIndex(m => m.Path != null && m.Path.Contains(chosenInfoHash, StringComparison.OrdinalIgnoreCase));
+                    if (chosenIdx > 0)
+                    {
+                        var chosenSource = mediaSources[chosenIdx];
+                        mediaSources.RemoveAt(chosenIdx);
+                        mediaSources.Insert(0, chosenSource);
+                    }
+                }
             }
 
             itemDto.Container = "mp4";
@@ -808,7 +822,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
                     sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
                     sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
-                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var st=s.nextElementSibling;st.textContent='Saving...';st.style.color='#f59e0b';fetch('/Premio/AddStream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itemId:s.dataset.itemid,title:s.dataset.title,year:s.dataset.year,isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d.success){st.textContent='✓ Saved!';st.style.color='#10b981';setTimeout(function(){location.reload();},600);}else{st.textContent='Error';st.style.color='#ef4444';}}).catch(function(){st.textContent='Error';st.style.color='#ef4444';});})(this);\">");
+                    sbDropdown.Append("onchange=\"(function(s){var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;if(st){st.textContent='Saving...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}fetch('/Premio/AddStream',{method:'POST',headers:h,body:JSON.stringify({itemId:s.dataset.itemid||'',title:s.dataset.title||'',year:s.dataset.year||'',isTv:true,season:parseInt(s.dataset.season,10),episode:parseInt(s.dataset.episode,10),infoHash:v})}).then(function(r){return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Saved to .strm!';st.style.color='#10b981';}setTimeout(function(){location.reload();},700);}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){if(st){st.textContent='Error';st.style.color='#ef4444';}});})(this);\">");
 
                     if (!hasRealChosenStream)
                     {
@@ -849,7 +863,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
                     sbDropdown.Append("""
                             </select>
-                            <span class="stream-save-status" style="font-size: 12px; font-weight: 600; white-space: nowrap;"></span>
+                            <span class="stream-save-status" style="font-size: 12px; font-weight: 600; white-space: nowrap; margin-left: 6px;"></span>
                         </div>
                         <div class="selectUnderline" style="height: 1px; background: rgba(255,255,255,0.1); margin-top: 4px;"></div>
                     </div>
@@ -881,6 +895,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     }
 
     [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Direct stream resolution must not crash the filter.")]
+    [SuppressMessage("Security", "CA3012:Do not use untrusted input to form regular expressions", Justification = "Static regex pattern used for hash extraction.")]
     private async Task<string?> ResolveDirectStreamUrlAsync(
         ActionExecutingContext context,
         TmdbItem item,
@@ -917,6 +932,57 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         else if (context.HttpContext.Request.Query.TryGetValue("episode", out var eStr2) && int.TryParse(eStr2, out var eVal2))
         {
             episode = eVal2;
+        }
+
+        if (!isRealInfoHash && requestedId != Guid.Empty)
+        {
+            var libItem = _libraryManager.GetItemById(requestedId);
+            if (libItem is Episode ep)
+            {
+                isTv = true;
+                season = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? season);
+                episode = ep.IndexNumber ?? episode;
+                var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? item.DisplayTitle;
+
+                if (!string.IsNullOrWhiteSpace(showTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(showTitle, season, episode, out var chosenHash))
+                {
+                    mediaSourceId = chosenHash;
+                    isRealInfoHash = true;
+                }
+            }
+
+            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
+            {
+                try
+                {
+                    var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
+                    var trimmed = fileContent?.Trim() ?? string.Empty;
+                    if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return trimmed;
+                        }
+
+                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                        if (hashMatch.Success)
+                        {
+                            mediaSourceId = hashMatch.Groups[1].Value;
+                            isRealInfoHash = true;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore file read exceptions
+                }
+            }
+        }
+
+        if (!isRealInfoHash && isTv && PremioMetadataCache.TryGetChosenEpisodeStream(item.DisplayTitle, season, episode, out var fallbackChosenHash))
+        {
+            mediaSourceId = fallbackChosenHash;
+            isRealInfoHash = true;
         }
 
         if (!isRealInfoHash)
