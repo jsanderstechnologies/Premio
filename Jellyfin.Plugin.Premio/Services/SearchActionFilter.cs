@@ -181,8 +181,66 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
 
         // ---------------------------------------------------------------------
-        // 2. Intercept Virtual Item Details, Auxiliary endpoints & Batch item requests
+        // 2. Intercept Virtual Item Details, Favorite / Add to Library, Auxiliary endpoints & Batch item requests
         // ---------------------------------------------------------------------
+        if (HttpMethods.IsPost(context.HttpContext.Request.Method) && requestPath.Contains("/FavoriteItems/", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestedId = ExtractItemId(context);
+            if (requestedId != Guid.Empty && PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
+            {
+                var isTv = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+                if (isTv)
+                {
+                    var tvDetails = cachedItem.Id > 0
+                        ? await _tmdbClient.GetDetailsAsync("tv", cachedItem.Id, cancellationToken).ConfigureAwait(false)
+                        : null;
+
+                    var imdbId = tvDetails?.ImdbId ?? (cachedItem.Id > 0 ? await _tmdbClient.GetExternalImdbIdAsync("tv", cachedItem.Id, cancellationToken).ConfigureAwait(false) : null);
+                    if (string.IsNullOrWhiteSpace(imdbId))
+                    {
+                        imdbId = $"premio_tv_{cachedItem.Id}";
+                    }
+
+                    byte[]? posterBytes = null;
+                    if (tvDetails?.PosterUrl is not null)
+                    {
+                        posterBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.PosterUrl, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    byte[]? backdropBytes = null;
+                    if (tvDetails?.BackdropUrl is not null)
+                    {
+                        backdropBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.BackdropUrl, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    tvDetails ??= new TmdbDetailedItem
+                    {
+                        Id = cachedItem.Id,
+                        Name = cachedItem.DisplayTitle,
+                        NumberOfEpisodes = 10,
+                        NumberOfSeasons = 1,
+                        Seasons = [new TmdbSeasonSummary { SeasonNumber = 1, EpisodeCount = 10 }]
+                    };
+
+                    _ = _strmService.CreateTvShowSeriesStructureAsync(
+                        cachedItem.DisplayTitle,
+                        cachedItem.Year,
+                        imdbId,
+                        tvDetails,
+                        posterBytes,
+                        backdropBytes,
+                        cancellationToken);
+
+                    context.Result = new ObjectResult(new UserItemDataDto
+                    {
+                        IsFavorite = true,
+                        Key = requestedId.ToString("N")
+                    });
+                    return;
+                }
+            }
+        }
+
         if (HttpMethods.IsGet(context.HttpContext.Request.Method))
         {
             var requestedId = ExtractItemId(context);
@@ -369,29 +427,29 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             : null;
         var imdbId = details?.ImdbId ?? (item.Id > 0 ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false) : null);
 
-        // 2. Fetch Torrentio streams
+        // 2. Fetch Torrentio streams for Movies only (TV shows do not perform magnet searches on search details)
         IReadOnlyList<TorrentioStreamResult> streams = Array.Empty<TorrentioStreamResult>();
-        if (!string.IsNullOrWhiteSpace(imdbId))
+        if (!isTv && !string.IsNullOrWhiteSpace(imdbId))
         {
-            streams = isTv
-                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
-                : await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
+            streams = await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
         }
 
-        // 3. Populate MediaSources (Version dropdown)
+        // 3. Populate MediaSources (Version dropdown for Movies)
         var defaultStreams = new[]
         {
             new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
             new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
         };
 
-        var defaultStreamGuid = GenerateDeterministicGuid($"select_stream:{requestedId}");
-        PremioMetadataCache.Register(defaultStreamGuid, item);
-        var defaultStreamId = defaultStreamGuid.ToString("N");
+        var mediaSources = new List<MediaSourceInfo>();
 
-        var mediaSources = new List<MediaSourceInfo>
+        if (!isTv)
         {
-            new MediaSourceInfo
+            var defaultStreamGuid = GenerateDeterministicGuid($"select_stream:{requestedId}");
+            PremioMetadataCache.Register(defaultStreamGuid, item);
+            var defaultStreamId = defaultStreamGuid.ToString("N");
+
+            mediaSources.Add(new MediaSourceInfo
             {
                 Id = defaultStreamId,
                 Name = "Select a Stream",
@@ -405,38 +463,38 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 SupportsDirectStream = true,
                 SupportsTranscoding = true,
                 MediaStreams = defaultStreams.ToList()
-            }
-        };
-
-        foreach (var stream in streams)
-        {
-            var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
-            var label = $"{stream.CleanReleaseName}{sizeStr}";
-            var rawHash = stream.InfoHash ?? string.Empty;
-            var streamGuid = GenerateDeterministicGuid($"stream:{requestedId}:{rawHash}");
-            PremioMetadataCache.Register(streamGuid, item);
-            if (!string.IsNullOrWhiteSpace(rawHash))
-            {
-                PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
-            }
-
-            var streamId = streamGuid.ToString("N");
-
-            mediaSources.Add(new MediaSourceInfo
-            {
-                Id = streamId,
-                Name = label,
-                Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={rawHash}",
-                Protocol = MediaProtocol.Http,
-                Type = MediaSourceType.Default,
-                Container = "mp4",
-                VideoType = VideoType.VideoFile,
-                IsRemote = true,
-                SupportsDirectPlay = true,
-                SupportsDirectStream = true,
-                SupportsTranscoding = true,
-                MediaStreams = defaultStreams.ToList()
             });
+
+            foreach (var stream in streams)
+            {
+                var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
+                var label = $"{stream.CleanReleaseName}{sizeStr}";
+                var rawHash = stream.InfoHash ?? string.Empty;
+                var streamGuid = GenerateDeterministicGuid($"stream:{requestedId}:{rawHash}");
+                PremioMetadataCache.Register(streamGuid, item);
+                if (!string.IsNullOrWhiteSpace(rawHash))
+                {
+                    PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
+                }
+
+                var streamId = streamGuid.ToString("N");
+
+                mediaSources.Add(new MediaSourceInfo
+                {
+                    Id = streamId,
+                    Name = label,
+                    Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={rawHash}",
+                    Protocol = MediaProtocol.Http,
+                    Type = MediaSourceType.Default,
+                    Container = "mp4",
+                    VideoType = VideoType.VideoFile,
+                    IsRemote = true,
+                    SupportsDirectPlay = true,
+                    SupportsDirectStream = true,
+                    SupportsTranscoding = true,
+                    MediaStreams = defaultStreams.ToList()
+                });
+            }
         }
 
         // 4. Register Backdrop if available
@@ -456,20 +514,24 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             Name = displayTitle,
             OriginalTitle = details?.Title ?? item.Title,
             Overview = details?.Overview ?? item.Overview,
-            Taglines = !string.IsNullOrWhiteSpace(details?.Tagline) ? new[] { details.Tagline } : Array.Empty<string>(),
+            Taglines = !string.IsNullOrWhiteSpace(details?.Tagline) ? new[] { details.Tagline } : (isTv ? new[] { "Premio: Add to Library to watch seasons & episodes" } : Array.Empty<string>()),
             Genres = details?.Genres?.Select(g => g.Name).ToArray() ?? Array.Empty<string>(),
             CommunityRating = details is not null ? (float)details.VoteAverage : (float)item.VoteAverage,
             RunTimeTicks = details?.Runtime > 0 ? TimeSpan.FromMinutes(details.Runtime.Value).Ticks : null,
             ProductionYear = prodYear,
             Type = isTv ? BaseItemKind.Series : BaseItemKind.Movie,
-            MediaType = MediaType.Video,
+            MediaType = isTv ? MediaType.Unknown : MediaType.Video,
             IsFolder = isTv,
+            CanPlay = !isTv,
+            PlayAccess = isTv ? PlayAccess.None : PlayAccess.Full,
+            CanDownload = false,
+            SupportsSync = false,
             PrimaryImageAspectRatio = 2.0 / 3.0,
             ImageTags = new Dictionary<ImageType, string> { { ImageType.Primary, "premio_" + item.Id } },
             BackdropImageTags = details?.BackdropUrl is not null ? new[] { "premio_bg_" + item.Id } : null,
             MediaSources = mediaSources.ToArray(),
             LocationType = LocationType.FileSystem,
-            MediaStreams = defaultStreams,
+            MediaStreams = isTv ? Array.Empty<MediaStream>() : defaultStreams,
             People = Array.Empty<BaseItemPerson>(),
             RemoteTrailers = Array.Empty<MediaUrl>(),
             ProviderIds = new Dictionary<string, string> { { "Tmdb", item.Id.ToString(CultureInfo.InvariantCulture) } }

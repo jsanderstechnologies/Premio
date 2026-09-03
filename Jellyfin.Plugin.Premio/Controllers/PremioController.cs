@@ -353,6 +353,105 @@ public sealed partial class PremioController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Adds an entire TV show into the Jellyfin library by fetching its seasons/episodes from TMDB
+    /// and generating the complete directory structure and .strm files.
+    /// </summary>
+    /// <param name="request">TV show addition parameters.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Result status and directory path.</returns>
+    [HttpPost("Library/AddTvShow")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "API controller returns HTTP 500 on unexpected faults.")]
+    public async Task<IActionResult> AddTvShow(
+        [FromBody] AddTvShowRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.Title) && request.TmdbId <= 0)
+        {
+            return BadRequest(new { message = "title or tmdbId is required." });
+        }
+
+        try
+        {
+            var tvDetails = request.TmdbId > 0
+                ? await _tmdbClient.GetDetailsAsync("tv", request.TmdbId, cancellationToken).ConfigureAwait(false)
+                : null;
+
+            var title = !string.IsNullOrWhiteSpace(request.Title)
+                ? request.Title
+                : (tvDetails?.DisplayTitle ?? "Unknown Show");
+
+            var year = !string.IsNullOrWhiteSpace(request.Year)
+                ? request.Year
+                : tvDetails?.Year;
+
+            var imdbId = request.ImdbId ?? tvDetails?.ImdbId;
+            if (string.IsNullOrWhiteSpace(imdbId) && request.TmdbId > 0)
+            {
+                imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", request.TmdbId, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(imdbId))
+            {
+                imdbId = $"premio_tv_{request.TmdbId}";
+            }
+
+            byte[]? posterBytes = null;
+            if (tvDetails?.PosterUrl is not null)
+            {
+                posterBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.PosterUrl, cancellationToken).ConfigureAwait(false);
+            }
+
+            byte[]? backdropBytes = null;
+            if (tvDetails?.BackdropUrl is not null)
+            {
+                backdropBytes = await _tmdbClient.DownloadImageBytesAsync(tvDetails.BackdropUrl, cancellationToken).ConfigureAwait(false);
+            }
+
+            tvDetails ??= new TmdbDetailedItem
+            {
+                Id = request.TmdbId,
+                Name = title,
+                NumberOfEpisodes = 10,
+                NumberOfSeasons = 1,
+                Seasons = [new TmdbSeasonSummary { SeasonNumber = 1, EpisodeCount = 10 }]
+            };
+
+            var directoryPath = await _strmService.CreateTvShowSeriesStructureAsync(
+                title,
+                year,
+                imdbId,
+                tvDetails,
+                posterBytes,
+                backdropBytes,
+                cancellationToken).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(directoryPath))
+            {
+                return BadRequest(new { message = "TV Shows output directory is not configured in Premio settings." });
+            }
+
+            LogAddedStream(_logger, title, directoryPath);
+            return Ok(new
+            {
+                success = true,
+                title = title,
+                year = year,
+                imdbId = imdbId,
+                directory = directoryPath
+            });
+        }
+        catch (Exception ex)
+        {
+            LogAddStreamFailed(_logger, request.Title, ex.Message);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = ex.Message });
+        }
+    }
+
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".ts", ".m4v", ".m2ts"
@@ -437,4 +536,26 @@ public sealed class AddStreamRequest
     /// <summary>Gets or sets the poster URI.</summary>
     [JsonPropertyName("posterUrl")]
     public Uri? PosterUrl { get; set; }
+}
+
+/// <summary>
+/// Parameters for adding an entire TV show to the library.
+/// </summary>
+public sealed class AddTvShowRequest
+{
+    /// <summary>Gets or sets the TMDB ID.</summary>
+    [JsonPropertyName("tmdbId")]
+    public int TmdbId { get; set; }
+
+    /// <summary>Gets or sets the optional IMDB ID.</summary>
+    [JsonPropertyName("imdbId")]
+    public string? ImdbId { get; set; }
+
+    /// <summary>Gets or sets the TV show title.</summary>
+    [JsonPropertyName("title")]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the release year.</summary>
+    [JsonPropertyName("year")]
+    public string? Year { get; set; }
 }

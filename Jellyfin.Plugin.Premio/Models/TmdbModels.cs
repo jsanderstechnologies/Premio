@@ -216,6 +216,10 @@ public sealed class TmdbDetailedItem
         }
     }
 
+    /// <summary>Gets the seasons list for TV shows.</summary>
+    [JsonPropertyName("seasons")]
+    public IReadOnlyList<TmdbSeasonSummary> Seasons { get; init; } = [];
+
     /// <summary>Gets the full poster URI.</summary>
     [JsonIgnore]
     public Uri? PosterUrl => !string.IsNullOrWhiteSpace(PosterPath)
@@ -227,6 +231,36 @@ public sealed class TmdbDetailedItem
     public Uri? BackdropUrl => !string.IsNullOrWhiteSpace(BackdropPath)
         ? new Uri($"https://image.tmdb.org/t/p/w1280{BackdropPath}")
         : null;
+}
+
+/// <summary>
+/// Represents a season summary for a TV show returned by TMDB.
+/// </summary>
+public sealed class TmdbSeasonSummary
+{
+    /// <summary>Gets the season ID.</summary>
+    [JsonPropertyName("id")]
+    public int Id { get; init; }
+
+    /// <summary>Gets the 1-based or 0-based season number.</summary>
+    [JsonPropertyName("season_number")]
+    public int SeasonNumber { get; init; }
+
+    /// <summary>Gets the number of episodes in this season.</summary>
+    [JsonPropertyName("episode_count")]
+    public int EpisodeCount { get; init; }
+
+    /// <summary>Gets the season name.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    /// <summary>Gets the season overview.</summary>
+    [JsonPropertyName("overview")]
+    public string? Overview { get; init; }
+
+    /// <summary>Gets the season poster path.</summary>
+    [JsonPropertyName("poster_path")]
+    public string? PosterPath { get; init; }
 }
 
 /// <summary>

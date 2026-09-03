@@ -140,6 +140,100 @@ public sealed partial class StrmFileService
     }
 
     /// <summary>
+    /// Creates the complete directory structure and .strm files for all seasons and episodes of a TV show.
+    /// </summary>
+    /// <param name="title">Show title.</param>
+    /// <param name="year">Release year.</param>
+    /// <param name="imdbId">IMDB identifier.</param>
+    /// <param name="tvDetails">TMDB detailed item with season metadata.</param>
+    /// <param name="posterBytes">Optional poster image bytes.</param>
+    /// <param name="backdropBytes">Optional backdrop image bytes.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The root directory path of the created show.</returns>
+    [SuppressMessage("Security", "CA3003:Review code for file path injection vulnerabilities", Justification = "File name is sanitized with SanitizeFileName and combined with configured server admin directories.")]
+    public async Task<string?> CreateTvShowSeriesStructureAsync(
+        string title,
+        string? year,
+        string imdbId,
+        TmdbDetailedItem tvDetails,
+        byte[]? posterBytes = null,
+        byte[]? backdropBytes = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+
+        var targetDir = string.IsNullOrWhiteSpace(Config.TvShowsStrmDirectory)
+            ? Config.StrmOutputDirectory
+            : Config.TvShowsStrmDirectory;
+
+        if (string.IsNullOrWhiteSpace(targetDir))
+        {
+            return null;
+        }
+
+        var cleanTitle = SanitizeFileName(title);
+        var cleanYear = !string.IsNullOrWhiteSpace(year) ? SanitizeFileName(year) : null;
+        var folderWithYear = cleanYear is not null ? $"{cleanTitle}.{cleanYear}" : cleanTitle;
+        var showRootPath = Path.Combine(targetDir, folderWithYear);
+
+        if (!Directory.Exists(showRootPath))
+        {
+            Directory.CreateDirectory(showRootPath);
+        }
+
+        if (posterBytes is not null && posterBytes.Length > 0)
+        {
+            var posterPath = Path.Combine(showRootPath, "poster.jpg");
+            if (!File.Exists(posterPath))
+            {
+                await File.WriteAllBytesAsync(posterPath, posterBytes, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (backdropBytes is not null && backdropBytes.Length > 0)
+        {
+            var backdropPath = Path.Combine(showRootPath, "fanart.jpg");
+            if (!File.Exists(backdropPath))
+            {
+                await File.WriteAllBytesAsync(backdropPath, backdropBytes, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        var seasons = tvDetails.Seasons.Where(s => s.SeasonNumber >= 1).ToList();
+        if (seasons.Count == 0)
+        {
+            var defaultCount = tvDetails.NumberOfEpisodes ?? 10;
+            seasons.Add(new TmdbSeasonSummary { SeasonNumber = 1, EpisodeCount = Math.Max(defaultCount, 1) });
+        }
+
+        foreach (var season in seasons)
+        {
+            var sNum = season.SeasonNumber;
+            var seasonFolder = Path.Combine(showRootPath, $"Season {sNum:D2}");
+            if (!Directory.Exists(seasonFolder))
+            {
+                Directory.CreateDirectory(seasonFolder);
+            }
+
+            var episodeCount = season.EpisodeCount > 0 ? season.EpisodeCount : 1;
+            for (var ep = 1; ep <= episodeCount; ep++)
+            {
+                var strmFileName = $"{cleanTitle}.S{sNum:D2}E{ep:D2}.strm";
+                var strmFilePath = Path.Combine(seasonFolder, strmFileName);
+
+                if (!File.Exists(strmFilePath) || Config.OverwriteExistingStrmFiles)
+                {
+                    var streamUrl = $"/Premio/Stream?type=tv&imdbId={Uri.EscapeDataString(imdbId)}&season={sNum}&episode={ep}&title={Uri.EscapeDataString(title)}&year={cleanYear ?? string.Empty}";
+                    await File.WriteAllTextAsync(strmFilePath, streamUrl, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        TriggerLibraryRefresh();
+        return showRootPath;
+    }
+
+    /// <summary>
     /// Writes a <c>.strm</c> file into the appropriate Movie or TV Show directory based on media type.
     /// </summary>
     /// <param name="title">Item title or formatted filename.</param>
