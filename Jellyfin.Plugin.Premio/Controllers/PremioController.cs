@@ -70,6 +70,17 @@ public sealed partial class PremioController : ControllerBase
     /// Directly streams or 302-redirects to the resolved Premiumize CDN video stream.
     /// Accessible anonymously so HTML5 video players without Jellyfin auth headers can stream seamlessly.
     /// </summary>
+    /// <param name="itemId">Optional route item ID.</param>
+    /// <param name="mediaSourceId">Optional selected media source ID.</param>
+    /// <param name="infoHash">Optional torrent infohash.</param>
+    /// <param name="type">Optional media type ("movie" or "tv").</param>
+    /// <param name="imdbId">Optional IMDb ID for direct stream resolution.</param>
+    /// <param name="season">Optional TV season number.</param>
+    /// <param name="episode">Optional TV episode number.</param>
+    /// <param name="title">Optional media title.</param>
+    /// <param name="year">Optional release year.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A redirect action to the playable stream or error status.</returns>
     [HttpGet("Stream/{itemId}")]
     [HttpGet("Stream")]
     [HttpHead("Stream/{itemId}")]
@@ -80,6 +91,12 @@ public sealed partial class PremioController : ControllerBase
         [FromRoute] Guid? itemId,
         [FromQuery] string? mediaSourceId,
         [FromQuery] string? infoHash,
+        [FromQuery] string? type,
+        [FromQuery] string? imdbId,
+        [FromQuery] int? season,
+        [FromQuery] int? episode,
+        [FromQuery] string? title,
+        [FromQuery] string? year,
         CancellationToken cancellationToken)
     {
         var targetHash = !string.IsNullOrWhiteSpace(infoHash)
@@ -105,18 +122,28 @@ public sealed partial class PremioController : ControllerBase
 
         var isRealInfoHash = !string.IsNullOrWhiteSpace(targetHash) && targetHash.Length == 40 && !string.Equals(targetHash, requestedGuid.ToString("N"), StringComparison.OrdinalIgnoreCase);
 
-        if (!isRealInfoHash && cachedItem is not null)
+        if (!isRealInfoHash)
         {
-            var isTv = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
-            var imdbId = cachedItem.Id > 0
-                ? await _tmdbClient.GetExternalImdbIdAsync(cachedItem.MediaType ?? (isTv ? "tv" : "movie"), cachedItem.Id, cancellationToken).ConfigureAwait(false)
-                : null;
+            var isTv = string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase) ||
+                       season.HasValue ||
+                       string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
 
-            if (!string.IsNullOrWhiteSpace(imdbId))
+            var resolvedImdbId = imdbId;
+            if (string.IsNullOrWhiteSpace(resolvedImdbId) && cachedItem is not null && cachedItem.Id > 0)
             {
+                resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync(cachedItem.MediaType ?? (isTv ? "tv" : "movie"), cachedItem.Id, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!string.IsNullOrWhiteSpace(resolvedImdbId))
+            {
+                var queryTitle = !string.IsNullOrWhiteSpace(title) ? title : cachedItem?.DisplayTitle;
+                var queryYear = !string.IsNullOrWhiteSpace(year) ? year : cachedItem?.Year;
+                var sNum = season ?? 1;
+                var epNum = episode ?? 1;
+
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cachedItem.DisplayTitle, cachedItem.Year, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cachedItem.DisplayTitle, cachedItem.Year, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(resolvedImdbId, sNum, epNum, queryTitle, queryYear, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(resolvedImdbId, queryTitle, queryYear, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {
@@ -142,18 +169,22 @@ public sealed partial class PremioController : ControllerBase
                 return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
             }
 
-            var title = cachedItem?.DisplayTitle ?? "Unknown Media";
-            var year = cachedItem?.Year;
-            var isTvShow = string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var isTvShow = string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase) ||
+                           season.HasValue ||
+                           string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var resolvedTitle = !string.IsNullOrWhiteSpace(title) ? title : (cachedItem?.DisplayTitle ?? "Unknown Media");
+            var resolvedYear = !string.IsNullOrWhiteSpace(year) ? year : cachedItem?.Year;
+            var targetSeason = season ?? 1;
+            var targetEpisode = episode ?? 1;
 
             // 2. Write .strm file & poster
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
-                title,
-                year,
+                resolvedTitle,
+                resolvedYear,
                 new Uri(streamUrl),
                 isTvShow,
-                1,
-                1,
+                targetSeason,
+                targetEpisode,
                 cancellationToken).ConfigureAwait(false);
 
             var posterUrl = cachedItem?.PosterUrl;

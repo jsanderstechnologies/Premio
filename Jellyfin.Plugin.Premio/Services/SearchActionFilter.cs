@@ -571,9 +571,27 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
 
             var isTv = itemDto.Type == BaseItemKind.Episode;
+            var seasonNumber = isTv ? (itemDto.ParentIndexNumber ?? 1) : 1;
+            var episodeNumber = isTv ? (itemDto.IndexNumber ?? 1) : 1;
+            var searchTitle = isTv && !string.IsNullOrWhiteSpace(itemDto.SeriesName) ? itemDto.SeriesName : itemDto.Name;
             string? imdbId = null;
 
-            if (itemDto.ProviderIds is not null)
+            // 1. If TV episode, lookup parent series in LibraryManager to get IMDb/TMDB provider IDs
+            if (isTv && itemDto.SeriesId.HasValue)
+            {
+                var seriesItem = _libraryManager.GetItemById(itemDto.SeriesId.Value);
+                if (seriesItem is not null)
+                {
+                    imdbId = seriesItem.GetProviderId("Imdb");
+                    if (string.IsNullOrWhiteSpace(imdbId) && int.TryParse(seriesItem.GetProviderId("Tmdb"), out var sTmdbId))
+                    {
+                        imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", sTmdbId, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            // 2. Check item's own ProviderIds
+            if (string.IsNullOrWhiteSpace(imdbId) && itemDto.ProviderIds is not null)
             {
                 itemDto.ProviderIds.TryGetValue("Imdb", out imdbId);
                 if (string.IsNullOrWhiteSpace(imdbId) && itemDto.ProviderIds.TryGetValue("Tmdb", out var tmdbIdStr) && int.TryParse(tmdbIdStr, out var tmdbId))
@@ -582,9 +600,10 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 }
             }
 
+            // 3. Fallback: search TMDB by series/item title
             if (string.IsNullOrWhiteSpace(imdbId))
             {
-                var searchResults = await _tmdbClient.SearchMultiAsync(itemDto.Name, cancellationToken).ConfigureAwait(false);
+                var searchResults = await _tmdbClient.SearchMultiAsync(searchTitle, cancellationToken).ConfigureAwait(false);
                 var match = FindMatchingItem(searchResults, isTv);
 
                 if (match is not null)
@@ -600,7 +619,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             var itemYear = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture);
             var streams = isTv
-                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, itemDto.Name, itemYear, cancellationToken).ConfigureAwait(false)
+                ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, seasonNumber, episodeNumber, searchTitle, itemYear, cancellationToken).ConfigureAwait(false)
                 : await _torrentioClient.GetMovieStreamsAsync(imdbId, itemDto.Name, itemYear, cancellationToken).ConfigureAwait(false);
 
             if (streams.Count == 0)
@@ -675,7 +694,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var syntheticItemForStreams = new TmdbItem
             {
                 Id = 0,
-                Title = itemDto.Name,
+                Title = searchTitle,
                 MediaType = isTv ? "tv" : "movie",
                 ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
             };
@@ -699,7 +718,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     Id = streamId,
                     Name = label,
-                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
+                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}&type={(isTv ? "tv" : "movie")}&imdbId={Uri.EscapeDataString(imdbId)}&season={seasonNumber}&episode={episodeNumber}&title={Uri.EscapeDataString(searchTitle)}&year={itemYear ?? string.Empty}",
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
                     Container = "mp4",
@@ -739,9 +758,30 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
         var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
 
+        var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+        var season = 1;
+        var episode = 1;
+
+        if (context.HttpContext.Request.Query.TryGetValue("SeasonNumber", out var sStr) && int.TryParse(sStr, out var sVal))
+        {
+            season = sVal;
+        }
+        else if (context.HttpContext.Request.Query.TryGetValue("season", out var sStr2) && int.TryParse(sStr2, out var sVal2))
+        {
+            season = sVal2;
+        }
+
+        if (context.HttpContext.Request.Query.TryGetValue("EpisodeNumber", out var eStr) && int.TryParse(eStr, out var eVal))
+        {
+            episode = eVal;
+        }
+        else if (context.HttpContext.Request.Query.TryGetValue("episode", out var eStr2) && int.TryParse(eStr2, out var eVal2))
+        {
+            episode = eVal2;
+        }
+
         if (!isRealInfoHash)
         {
-            var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
             var imdbId = item.Id > 0
                 ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false)
                 : null;
@@ -760,7 +800,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
                     : await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
@@ -790,20 +830,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
 
             // 2. Write corresponding .strm file and save poster to Jellyfin Library
-            var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
-            var season = 1;
-            var episode = 1;
-
-            if (context.HttpContext.Request.Query.TryGetValue("SeasonNumber", out var sStr) && int.TryParse(sStr, out var sVal))
-            {
-                season = sVal;
-            }
-
-            if (context.HttpContext.Request.Query.TryGetValue("EpisodeNumber", out var eStr) && int.TryParse(eStr, out var eVal))
-            {
-                episode = eVal;
-            }
-
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
                 item.DisplayTitle,
                 item.Year,
