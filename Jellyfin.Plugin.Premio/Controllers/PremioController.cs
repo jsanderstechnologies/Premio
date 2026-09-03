@@ -101,8 +101,8 @@ public sealed partial class PremioController : ControllerBase
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cachedItem?.DisplayTitle, cachedItem?.Year, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cachedItem?.DisplayTitle, cachedItem?.Year, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, 1, 1, cachedItem.DisplayTitle, cachedItem.Year, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, cachedItem.DisplayTitle, cachedItem.Year, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {
@@ -128,9 +128,9 @@ public sealed partial class PremioController : ControllerBase
                 return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
             }
 
-            var title = cachedItem?.DisplayTitle ?? "Unknown Media";
-            var year = cachedItem?.Year;
-            var isTvShow = string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+            var title = cachedItem.DisplayTitle;
+            var year = cachedItem.Year;
+            var isTvShow = string.Equals(cachedItem.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
 
             // 2. Write .strm file & poster
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
@@ -142,7 +142,7 @@ public sealed partial class PremioController : ControllerBase
                 1,
                 cancellationToken).ConfigureAwait(false);
 
-            if (!string.IsNullOrWhiteSpace(strmPath) && cachedItem?.PosterUrl is not null)
+            if (!string.IsNullOrWhiteSpace(strmPath) && cachedItem.PosterUrl is not null)
             {
                 var posterBytes = await _tmdbClient.DownloadImageBytesAsync(cachedItem.PosterUrl, cancellationToken).ConfigureAwait(false);
                 if (posterBytes is not null && posterBytes.Length > 0)
@@ -210,6 +210,8 @@ public sealed partial class PremioController : ControllerBase
     /// </summary>
     /// <param name="type">"movie" or "tv".</param>
     /// <param name="imdbId">IMDB ID (e.g. "tt0093058").</param>
+    /// <param name="title">Optional item title to match in release names.</param>
+    /// <param name="year">Optional release year to match in release names.</param>
     /// <param name="season">Season number for TV shows.</param>
     /// <param name="episode">Episode number for TV shows.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
