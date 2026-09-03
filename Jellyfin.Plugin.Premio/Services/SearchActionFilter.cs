@@ -386,7 +386,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Path = $"/Premio/Stream/{requestedId}?mediaSourceId={defaultStreamId}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
-                Container = "mkv",
+                Container = "mp4",
                 VideoType = VideoType.VideoFile,
                 IsRemote = true,
                 SupportsDirectPlay = true,
@@ -417,7 +417,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 Path = $"/Premio/Stream/{requestedId}?mediaSourceId={streamId}&infoHash={rawHash}",
                 Protocol = MediaProtocol.Http,
                 Type = MediaSourceType.Default,
-                Container = "mkv",
+                Container = "mp4",
                 VideoType = VideoType.VideoFile,
                 IsRemote = true,
                 SupportsDirectPlay = true,
@@ -578,7 +578,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Name = label,
                     Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}",
                     Type = MediaSourceType.Default,
-                    Container = "mkv",
+                    Container = "mp4",
                     VideoType = VideoType.VideoFile,
                     IsRemote = true,
                     SupportsDirectPlay = true,
@@ -730,15 +730,20 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     Id = mediaSourceId,
                     Path = streamUrl,
-                    TranscodingUrl = streamUrl,
+                    DirectStreamUrl = streamUrl,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
-                    Container = "mkv",
+                    Container = "mp4",
                     VideoType = VideoType.VideoFile,
                     IsRemote = true,
                     SupportsDirectPlay = true,
                     SupportsDirectStream = true,
-                    SupportsTranscoding = true
+                    SupportsTranscoding = true,
+                    MediaStreams = new[]
+                    {
+                        new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
+                        new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
+                    }
                 }
             },
             PlaySessionId = Guid.NewGuid().ToString("N")
