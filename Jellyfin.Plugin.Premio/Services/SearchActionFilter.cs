@@ -419,8 +419,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var tasks = queryResult.Items.Select(ep => EnrichExistingLibraryItemDtoAsync(ep, cancellationToken));
                     await Task.WhenAll(tasks).ConfigureAwait(false);
                 }
-
-                return;
             }
         }
 
