@@ -328,7 +328,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
                         if (libItem is Episode ep)
                         {
-                            var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+                            var series = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
                             title = ep.SeriesName ?? series?.Name ?? libItem.Name;
                             year = series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? year;
                             if (series is not null && int.TryParse(series.GetProviderId("Tmdb"), out var sTmdbId))
@@ -867,7 +867,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             isTv = true;
             season = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? season);
             episode = ep.IndexNumber ?? episode;
-            var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+            var series = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
             var showTitle = ep.SeriesName ?? series?.Name ?? ep.Name;
             if (!string.IsNullOrWhiteSpace(showTitle))
             {

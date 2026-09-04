@@ -17,6 +17,7 @@ using Jellyfin.Plugin.Premio.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -203,7 +204,7 @@ public sealed partial class PremioController : ControllerBase
                     resolvedImdbId = epLookup.GetProviderId("Imdb");
                     if (string.IsNullOrWhiteSpace(resolvedImdbId))
                     {
-                        var sLookup = epLookup.Series ?? (epLookup.SeriesId.HasValue ? _libraryManager.GetItemById(epLookup.SeriesId.Value) as Series : epLookup.FindParent<Series>());
+                        var sLookup = epLookup.Series ?? (epLookup.SeriesId != Guid.Empty ? _libraryManager.GetItemById(epLookup.SeriesId) as Series : epLookup.FindParent<Series>());
                         if (sLookup is not null)
                         {
                             resolvedImdbId = sLookup.GetProviderId("Imdb");
@@ -458,7 +459,7 @@ public sealed partial class PremioController : ControllerBase
                     request.Episode = ep.IndexNumber ?? 1;
                 }
 
-                var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+                var series = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
                 if (string.IsNullOrWhiteSpace(request.Title))
                 {
                     request.Title = ep.SeriesName ?? series?.Name ?? ep.Name;
@@ -485,7 +486,7 @@ public sealed partial class PremioController : ControllerBase
         // 3. If infoHash is still empty, auto-resolve best stream for episode from Torrentio
         if (string.IsNullOrWhiteSpace(request.InfoHash) && libItem is Episode epFallback)
         {
-            var epSeries = epFallback.Series ?? (epFallback.SeriesId.HasValue ? _libraryManager.GetItemById(epFallback.SeriesId.Value) as Series : epFallback.FindParent<Series>());
+            var epSeries = epFallback.Series ?? (epFallback.SeriesId != Guid.Empty ? _libraryManager.GetItemById(epFallback.SeriesId) as Series : epFallback.FindParent<Series>());
             var imdbId = epFallback.GetProviderId("Imdb") ?? epSeries?.GetProviderId("Imdb");
             if (string.IsNullOrWhiteSpace(imdbId) && epSeries is not null && int.TryParse(epSeries.GetProviderId("Tmdb"), out var sTmdb))
             {
