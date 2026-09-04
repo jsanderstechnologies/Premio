@@ -12,7 +12,7 @@ namespace Jellyfin.Plugin.Premio.Services;
 /// </summary>
 public sealed class PremioWebInjectionMiddleware
 {
-    private const string ScriptTag = "<script defer src=\"/Premio/Web/premio.js\"></script></body>";
+    private static readonly string ScriptTag = $"<script defer src=\"/Premio/Web/premio.js?v={typeof(PremioWebInjectionMiddleware).Assembly.GetName().Version}\"></script></body>";
     private readonly RequestDelegate _next;
 
     /// <summary>

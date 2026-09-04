@@ -400,9 +400,42 @@ public sealed partial class PremioController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // 1. If ItemId is supplied, auto-populate missing fields from Jellyfin LibraryManager
+        BaseItem? libItem = null;
+        if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var parsedId))
+        {
+            libItem = _libraryManager.GetItemById(parsedId);
+            if (libItem is Episode ep)
+            {
+                request.IsTv = true;
+                if (string.IsNullOrWhiteSpace(request.Title))
+                {
+                    request.Title = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Name;
+                }
+
+                request.Season ??= ep.AiredSeasonNumber ?? ep.ParentIndexNumber ?? 1;
+                request.Episode ??= ep.IndexNumber ?? 1;
+                request.Year ??= ep.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? ep.Series?.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (libItem is not null && string.IsNullOrWhiteSpace(request.Title))
+            {
+                request.Title = libItem.Name;
+                request.Year ??= libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
+        // 2. If infoHash is a deterministic GUID (MediaSourceId from native dropdown), resolve to torrent hash
+        if (!string.IsNullOrWhiteSpace(request.InfoHash) && Guid.TryParse(request.InfoHash, out var mediaGuid))
+        {
+            if (PremioMetadataCache.TryGetStreamHash(mediaGuid, out var mappedTorrentHash))
+            {
+                request.InfoHash = mappedTorrentHash;
+            }
+        }
+
         LogAddStreamReceived(
             _logger,
-            request.Title,
+            request.Title ?? "unknown",
             request.Season ?? 0,
             request.Episode ?? 0,
             request.InfoHash ?? "none",
@@ -979,185 +1012,123 @@ public sealed partial class PremioController : ControllerBase
     [AllowAnonymous]
     public IActionResult GetPremioClientScript()
     {
+        Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+        Response.Headers["Pragma"] = "no-cache";
+        Response.Headers["Expires"] = "0";
+
         const string js = """
             (function() {
                 console.log('[Premio] Client script loaded.');
 
-                const initializedEpisodes = new Set();
+                // Universal change listener: captures stream/version selection anywhere in Jellyfin Web
+                document.addEventListener('change', async function(e) {
+                    const el = e.target;
+                    if (!el || el.tagName !== 'SELECT') return;
 
-                function scanAndInject() {
-                    const items = document.querySelectorAll('.listItem, .card');
-                    for (let i = 0; i < items.length; i++) {
-                        const item = items[i];
-                        const id = item.getAttribute('data-id') || item.getAttribute('data-itemid') || (item.dataset ? item.dataset.id : null);
-                        if (!id || initializedEpisodes.has(id)) {
-                            continue;
-                        }
+                    const isStreamSelect = el.hasAttribute('data-title') ||
+                                           el.hasAttribute('data-season') ||
+                                           el.closest('.selectSourceContainer') ||
+                                           el.closest('.premio-card-stream-wrap') ||
+                                           el.id === 'selectSource' ||
+                                           (el.className && typeof el.className === 'string' && el.className.includes('selectSource'));
 
-                        const type = item.getAttribute('data-type') || (item.dataset ? item.dataset.type : null);
-                        const isEpisode = type === 'Episode' || item.closest('.episodesList') || item.closest('#childrenItems') || item.querySelector('.listItem-indexnumber') || item.querySelector('.episodeTitle');
-                        if (!isEpisode) {
-                            continue;
-                        }
+                    if (!isStreamSelect) return;
 
-                        initializedEpisodes.add(id);
-                        injectDropdown(item, id);
+                    const val = el.value;
+                    if (!val) return;
+
+                    console.log('[Premio] Captured stream selection:', val);
+
+                    const container = el.closest('.selectContainer') || el.closest('.premio-card-stream-wrap') || el.parentElement;
+                    let statusEl = container ? container.querySelector('.stream-save-status') : null;
+                    if (!statusEl && container) {
+                        statusEl = document.createElement('span');
+                        statusEl.className = 'stream-save-status';
+                        statusEl.style.cssText = 'font-size: 12px; font-weight: 600; margin-left: 8px;';
+                        container.appendChild(statusEl);
                     }
-                }
 
-                async function injectDropdown(cardEl, itemId) {
-                    const playBtn = cardEl.querySelector('button[data-action="play"], .cardOverlayButton-br, .listItemImageButton');
-                    const mountPoint = cardEl.querySelector('.listItem-content, .cardText, .listItem-bottomoverview, .cardContent') || cardEl;
+                    if (statusEl) {
+                        statusEl.textContent = 'Sending to Premiumize...';
+                        statusEl.style.color = '#f59e0b';
+                    }
 
-                    const wrap = document.createElement('div');
-                    wrap.className = 'premio-card-stream-wrap';
-                    wrap.style.cssText = 'display:flex; align-items:center; gap:6px; margin:6px 0; font-size:12px; z-index:10; position:relative; flex-wrap:wrap;';
+                    const card = el.closest('.card, .listItem, .detailRibbon, .itemDetailPage') || document;
+                    const playBtns = card.querySelectorAll('button[data-action=play], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');
+                    playBtns.forEach(function(b) {
+                        b.style.display = 'none';
+                        b.disabled = true;
+                        b.style.pointerEvents = 'none';
+                    });
 
-                    const label = document.createElement('span');
-                    label.style.cssText = 'font-weight:700; color:#00a4dc; text-transform:uppercase; font-size:10px; letter-spacing:0.5px;';
-                    label.textContent = 'Stream:';
+                    let itemId = el.getAttribute('data-itemid') || '';
+                    if (!itemId) {
+                        const itemEl = el.closest('[data-id], [data-itemid]');
+                        if (itemEl) itemId = itemEl.getAttribute('data-id') || itemEl.getAttribute('data-itemid') || '';
+                    }
+                    if (!itemId) {
+                        const hash = window.location.hash || '';
+                        const search = window.location.search || '';
+                        const queryStr = search || (hash.includes('?') ? '?' + hash.split('?')[1] : '');
+                        const urlParams = new URLSearchParams(queryStr);
+                        itemId = urlParams.get('id') || '';
+                    }
 
-                    const select = document.createElement('select');
-                    select.className = 'emby-select emby-select-withcolor';
-                    select.style.cssText = 'font-size:11px; padding:3px 6px; border-radius:4px; background:#1c1c1c; color:#fff; border:1px solid #444; max-width:280px; text-overflow:ellipsis; cursor:pointer;';
-                    select.innerHTML = '<option value="">Loading streams...</option>';
+                    const title = el.getAttribute('data-title') || '';
+                    const year = el.getAttribute('data-year') || '';
+                    const season = parseInt(el.getAttribute('data-season'), 10) || 0;
+                    const episode = parseInt(el.getAttribute('data-episode'), 10) || 0;
 
-                    const status = document.createElement('span');
-                    status.style.cssText = 'font-size:11px; font-weight:600;';
-
-                    wrap.appendChild(label);
-                    wrap.appendChild(select);
-                    wrap.appendChild(status);
-
-                    wrap.addEventListener('click', (e) => e.stopPropagation());
-                    wrap.addEventListener('mousedown', (e) => e.stopPropagation());
-
-                    mountPoint.appendChild(wrap);
+                    const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
+                    const apiUrl = (window.ApiClient && typeof ApiClient.getUrl === 'function') ? ApiClient.getUrl('Premio/AddStream') : '/Premio/AddStream';
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (tok) { headers['X-Emby-Token'] = tok; }
 
                     try {
-                        const res = await fetch(`/Premio/EpisodeStreams?itemId=${encodeURIComponent(itemId)}`);
-                        if (!res.ok) {
-                            wrap.remove();
-                            return;
-                        }
-                        const data = await res.json();
-                        if (!data.streams || data.streams.length === 0) {
-                            select.innerHTML = '<option value="">No streams found</option>';
-                            select.disabled = true;
-                            if (playBtn) {
-                                playBtn.style.opacity = '0.3';
-                                playBtn.style.pointerEvents = 'none';
-                            }
-                            return;
-                        }
-
-                        select.innerHTML = '';
-                        if (!data.hasChosenStream) {
-                            const defOpt = document.createElement('option');
-                            defOpt.value = '';
-                            defOpt.textContent = '-- Choose a Stream --';
-                            defOpt.selected = true;
-                            select.appendChild(defOpt);
-
-                            if (playBtn) {
-                                playBtn.style.opacity = '0.3';
-                                playBtn.style.pointerEvents = 'none';
-                                playBtn.title = 'Select a stream from the dropdown first';
-                            }
-                        } else {
-                            if (playBtn) {
-                                playBtn.style.opacity = '1';
-                                playBtn.style.pointerEvents = 'auto';
-                                playBtn.title = 'Play';
-                            }
-                        }
-
-                        for (let k = 0; k < data.streams.length; k++) {
-                            const s = data.streams[k];
-                            const opt = document.createElement('option');
-                            opt.value = s.infoHash;
-                            const cacheMark = s.isCached ? '⚡' : '⏳';
-                            const sizeStr = s.fileSize ? ` (${s.fileSize})` : '';
-                            opt.textContent = `[${cacheMark}] ${s.cleanReleaseName}${sizeStr}`;
-                            if (data.currentHash && s.infoHash.toLowerCase() === data.currentHash.toLowerCase()) {
-                                opt.selected = true;
-                            }
-                            select.appendChild(opt);
-                        }
-
-                        select.addEventListener('change', async (e) => {
-                            const chosenHash = e.target.value;
-                            if (!chosenHash) return;
-
-                            status.textContent = 'Sending to Premiumize...';
-                            status.style.color = '#f59e0b';
-                            select.disabled = true;
-
-                            try {
-                                const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
-                                const apiUrl = (window.ApiClient && typeof ApiClient.getUrl === 'function') ? ApiClient.getUrl('Premio/AddStream') : '/Premio/AddStream';
-                                const h = { 'Content-Type': 'application/json' };
-                                if (tok) { h['X-Emby-Token'] = tok; }
-
-                                const saveRes = await fetch(apiUrl, {
-                                    method: 'POST',
-                                    headers: h,
-                                    body: JSON.stringify({
-                                        itemId: itemId || '',
-                                        title: data.title,
-                                        year: data.year,
-                                        isTv: true,
-                                        season: data.season,
-                                        episode: data.episode,
-                                        infoHash: chosenHash
-                                    })
-                                });
-
-                                if (!saveRes.ok) {
-                                    throw new Error('HTTP ' + saveRes.status + ' ' + saveRes.statusText);
-                                }
-
-                                const saveJson = await saveRes.json();
-                                if (saveJson.success) {
-                                    status.textContent = '✓ Stream ready! Saved to .strm';
-                                    status.style.color = '#10b981';
-                                    if (playBtn) {
-                                        playBtn.style.opacity = '1';
-                                        playBtn.style.pointerEvents = 'auto';
-                                        playBtn.title = 'Play';
-                                    }
-                                    const placeholder = select.querySelector('option[value=""]');
-                                    if (placeholder) placeholder.remove();
-                                    setTimeout(() => location.reload(), 1200);
-                                } else {
-                                    status.textContent = 'Error: ' + (saveJson.message || 'Failed');
-                                    status.style.color = '#ef4444';
-                                }
-                            } catch (err) {
-                                console.error('[Premio] Save stream error:', err);
-                                status.textContent = 'Error: ' + err.message;
-                                status.style.color = '#ef4444';
-                            } finally {
-                                select.disabled = false;
-                            }
+                        const res = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: headers,
+                            body: JSON.stringify({
+                                itemId: itemId,
+                                title: title,
+                                year: year,
+                                isTv: true,
+                                season: season,
+                                episode: episode,
+                                infoHash: val
+                            })
                         });
 
+                        if (!res.ok) {
+                            throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+                        }
+
+                        const data = await res.json();
+                        if (data && data.success) {
+                            if (statusEl) {
+                                statusEl.textContent = '✓ Stream ready! Saved to .strm';
+                                statusEl.style.color = '#10b981';
+                            }
+                            playBtns.forEach(function(b) {
+                                b.style.display = '';
+                                b.disabled = false;
+                                b.style.pointerEvents = 'auto';
+                            });
+                            setTimeout(function() { location.reload(); }, 1200);
+                        } else {
+                            if (statusEl) {
+                                statusEl.textContent = 'Error: ' + (data && data.message ? data.message : 'Failed');
+                                statusEl.style.color = '#ef4444';
+                            }
+                        }
                     } catch (err) {
-                        wrap.remove();
+                        console.error('[Premio] Failed to add stream:', err);
+                        if (statusEl) {
+                            statusEl.textContent = 'Error: ' + err.message;
+                            statusEl.style.color = '#ef4444';
+                        }
                     }
-                }
-
-                let debounceTimer;
-                const observer = new MutationObserver(() => {
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(scanAndInject, 250);
-                });
-
-                observer.observe(document.body, { childList: true, subtree: true });
-                window.addEventListener('hashchange', () => setTimeout(scanAndInject, 400));
-                window.addEventListener('popstate', () => setTimeout(scanAndInject, 400));
-
-                setTimeout(scanAndInject, 500);
+                }, true);
             })();
             """;
 
@@ -1215,7 +1186,7 @@ public sealed partial class PremioController : ControllerBase
     // LoggerMessage delegates (CA1848)
     // -------------------------------------------------------------------------
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Added stream for '{Title}' -> '{Path}'")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Added stream for '{Title}' -> '{Path}'")]
     private static partial void LogAddedStream(ILogger logger, string title, string path);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl}")]
@@ -1224,7 +1195,7 @@ public sealed partial class PremioController : ControllerBase
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Stream resolution failed for '{Guid}': {ErrorMessage}")]
     private static partial void LogStreamResolutionFailed(ILogger logger, Guid guid, string errorMessage);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: >>> AddStream received for '{Title}' (Season {Season}, Episode {Episode}, InfoHash: {InfoHash}, ItemId: {ItemId}) <<<")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: >>> AddStream received for '{Title}' (Season {Season}, Episode {Episode}, InfoHash: {InfoHash}, ItemId: {ItemId}) <<<")]
     private static partial void LogAddStreamReceived(ILogger logger, string title, int season, int episode, string infoHash, string itemId);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Failed to add stream for '{Title}': {ErrorMessage}")]
