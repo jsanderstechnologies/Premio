@@ -323,18 +323,36 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         var isTv = libItem is Series || libItem is Episode;
                         var title = libItem.Name;
+                        var year = libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+                        var tmdbId = 0;
+
                         if (libItem is Episode ep)
                         {
-                            title = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Series?.Name ?? libItem.Name;
+                            var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+                            title = ep.SeriesName ?? series?.Name ?? libItem.Name;
+                            year = series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? year;
+                            if (series is not null && int.TryParse(series.GetProviderId("Tmdb"), out var sTmdbId))
+                            {
+                                tmdbId = sTmdbId;
+                            }
+                            else if (int.TryParse(ep.GetProviderId("Tmdb"), out var epTmdbId))
+                            {
+                                tmdbId = epTmdbId;
+                            }
+                        }
+                        else if (int.TryParse(libItem.GetProviderId("Tmdb"), out var itemTmdbId))
+                        {
+                            tmdbId = itemTmdbId;
                         }
 
                         cachedItem = new TmdbItem
                         {
-                            Id = 0,
+                            Id = tmdbId,
                             Title = title,
                             MediaType = isTv ? "tv" : "movie",
-                            ReleaseDate = libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture)
+                            ReleaseDate = year
                         };
+                        PremioMetadataCache.Register(requestedId, cachedItem);
                     }
                 }
 
@@ -815,98 +833,9 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             itemDto.MediaStreams = defaultStreams;
             itemDto.MediaSources = mediaSources.ToArray();
 
-            if (isTv)
-            {
-                if (streams.Count > 0)
-                {
-                    var sbDropdown = new StringBuilder();
-                    var encodedTitle = WebUtility.HtmlEncode(searchTitle ?? "Show");
-                    var encodedYear = WebUtility.HtmlEncode(itemYear ?? string.Empty);
-                    var seasonStr = seasonNumber.ToString(CultureInfo.InvariantCulture);
-                    var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
-                    var itemIdStr = itemDto.Id != Guid.Empty ? itemDto.Id.ToString() : string.Empty;
-
-                    // If no stream chosen yet, hide poster play button immediately
-                    if (!hasRealChosenStream)
-                    {
-                        sbDropdown.Append("""<img src="data:," onerror="var c=this.closest('.card, .listItem, .detailRibbon, .itemDetailPage')||this.parentElement;if(c){var b=c.querySelectorAll('button[data-action=play], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');b.forEach(function(x){x.style.display='none';x.disabled=true;x.style.pointerEvents='none';});}this.remove();" style="display:none;" />""");
-                    }
-
-                    // Match exact Jellyfin Version droplist style
-                    sbDropdown.Append("<div class=\"selectContainer selectSourceContainer focusable\" onclick=\"event.stopPropagation();\" style=\"margin: 10px 0 8px 0; width: 100%; max-width: 520px;\">");
-                    sbDropdown.Append("<label class=\"selectLabel selectLabel-focused\" style=\"display: block; font-size: 12px; font-weight: 600; color: #00a4dc; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;\">Version</label>");
-                    sbDropdown.Append("<div style=\"display: flex; align-items: center; gap: 8px;\">");
-                    sbDropdown.Append("<select is=\"emby-select\" class=\"emby-select-withcolor emby-select\" style=\"flex: 1; font-size: 13px; padding: 7px 12px; border-radius: 4px; border: 1px solid #444; background: rgba(26,26,26,0.95); color: #fff; cursor: pointer;\" ");
-                    sbDropdown.Append("data-itemid=\"").Append(itemIdStr).Append("\" ");
-                    sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
-                    sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
-                    sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
-                    sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
-                    sbDropdown.Append("onchange=\"(function(s){try{var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;var card=s.closest('.card, .listItem, .detailRibbon, .itemDetailPage')||document;var pBtns=card.querySelectorAll('button[data-action=play], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');pBtns.forEach(function(b){b.style.display='none';b.disabled=true;b.style.pointerEvents='none';});if(st){st.textContent='Sending to Premiumize...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var apiUrl=(window.ApiClient&&typeof ApiClient.getUrl==='function')?ApiClient.getUrl('Premio/AddStream'):'/Premio/AddStream';var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}var payload={itemId:s.getAttribute('data-itemid')||'',title:s.getAttribute('data-title')||'',year:s.getAttribute('data-year')||'',isTv:true,season:parseInt(s.getAttribute('data-season'),10)||1,episode:parseInt(s.getAttribute('data-episode'),10)||1,infoHash:v};fetch(apiUrl,{method:'POST',headers:h,body:JSON.stringify(payload)}).then(function(r){if(!r.ok){throw new Error('HTTP '+r.status+' '+r.statusText);}return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Stream ready! Saved to .strm';st.style.color='#10b981';}pBtns.forEach(function(b){b.style.display='';b.disabled=false;b.style.pointerEvents='auto';});setTimeout(function(){location.reload();},1200);}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){console.error('[Premio] Save failed:',e);if(st){st.textContent='Error: '+e.message;st.style.color='#ef4444';}});}catch(err){console.error('[Premio] onchange error:',err);alert('[Premio] Error: '+err.message);}})(this);\">");
-
-                    if (!hasRealChosenStream)
-                    {
-                        sbDropdown.Append("<option value=\"\" disabled selected>Select a Stream</option>");
-                    }
-
-                    for (var sIdx = 0; sIdx < streams.Count; sIdx++)
-                    {
-                        var st = streams[sIdx];
-                        var sz = !string.IsNullOrWhiteSpace(st.FileSize) ? $" ({st.FileSize})" : string.Empty;
-
-                        // Ensure release name has show name, season, and episode number
-                        var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
-                        var releaseName = st.CleanReleaseName;
-                        string text;
-                        if (releaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase))
-                        {
-                            text = $"{releaseName}{sz}";
-                        }
-                        else
-                        {
-                            text = $"{searchTitle} - {epCode} - {st.Quality}{sz} - {releaseName}";
-                        }
-
-                        var isSelected = false;
-                        if (!string.IsNullOrWhiteSpace(chosenInfoHash) && string.Equals(st.InfoHash, chosenInfoHash, StringComparison.OrdinalIgnoreCase))
-                        {
-                            isSelected = true;
-                        }
-                        else if (hasRealChosenStream && string.IsNullOrWhiteSpace(chosenInfoHash) && sIdx == 0)
-                        {
-                            isSelected = true;
-                        }
-
-                        var selAttr = isSelected ? "selected=\"selected\"" : string.Empty;
-                        sbDropdown.Append("<option value=\"").Append(WebUtility.HtmlEncode(st.InfoHash)).Append("\" ").Append(selAttr).Append('>').Append(WebUtility.HtmlEncode(text)).Append("</option>");
-                    }
-
-                    sbDropdown.Append("""
-                            </select>
-                            <span class="stream-save-status" style="font-size: 12px; font-weight: 600; white-space: nowrap; margin-left: 6px;"></span>
-                        </div>
-                        <div class="selectUnderline" style="height: 1px; background: rgba(255,255,255,0.1); margin-top: 4px;"></div>
-                    </div>
-                    """);
-
-                    var origOverview = itemDto.Overview ?? string.Empty;
-                    itemDto.Overview = sbDropdown.ToString() + (string.IsNullOrWhiteSpace(origOverview) ? string.Empty : $"<div style=\"margin-top: 6px;\">{origOverview}</div>");
-                }
-
-                if (!hasRealChosenStream)
-                {
-                    itemDto.PlayAccess = PlayAccess.None;
-                    itemDto.LocationType = LocationType.Virtual;
-                    itemDto.CanDownload = false;
-                    itemDto.Taglines = ["⚠️ No stream chosen - Pick from dropdown to play"];
-                }
-                else
-                {
-                    itemDto.PlayAccess = PlayAccess.Full;
-                    itemDto.LocationType = LocationType.FileSystem;
-                    itemDto.CanDownload = true;
-                }
-            }
+            itemDto.PlayAccess = PlayAccess.Full;
+            itemDto.LocationType = LocationType.FileSystem;
+            itemDto.CanDownload = true;
         }
         catch (Exception ex)
         {
@@ -930,16 +859,31 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var season = 1;
         var episode = 1;
         var resolvedTitle = item.DisplayTitle;
+        string? resolvedYear = item.Year;
+        string? imdbId = null;
 
         if (libItem is Episode ep)
         {
             isTv = true;
             season = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? season);
             episode = ep.IndexNumber ?? episode;
-            var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Series?.Name;
+            var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+            var showTitle = ep.SeriesName ?? series?.Name ?? ep.Name;
             if (!string.IsNullOrWhiteSpace(showTitle))
             {
                 resolvedTitle = showTitle;
+            }
+
+            resolvedYear = series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? ep.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? resolvedYear;
+
+            imdbId = ep.GetProviderId("Imdb");
+            if (string.IsNullOrWhiteSpace(imdbId) && series is not null)
+            {
+                imdbId = series.GetProviderId("Imdb");
+                if (string.IsNullOrWhiteSpace(imdbId) && int.TryParse(series.GetProviderId("Tmdb"), out var sTmdbId))
+                {
+                    imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", sTmdbId, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
         else if (isTv)
@@ -1012,9 +956,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
         if (!isRealInfoHash)
         {
-            var imdbId = item.Id > 0
-                ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false)
-                : null;
+            if (string.IsNullOrWhiteSpace(imdbId))
+            {
+                imdbId = item.Id > 0
+                    ? await _tmdbClient.GetExternalImdbIdAsync(item.MediaType ?? (isTv ? "tv" : "movie"), item.Id, cancellationToken).ConfigureAwait(false)
+                    : null;
+            }
 
             if (string.IsNullOrWhiteSpace(imdbId))
             {
@@ -1030,8 +977,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, resolvedTitle, item.Year, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, resolvedTitle, item.Year, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, resolvedTitle, resolvedYear, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, resolvedTitle, resolvedYear, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {
@@ -1059,6 +1006,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             LogStreamResolved(_logger, resolvedTitle, mediaSourceId, streamUrl);
 
+            if (isTv)
+            {
+                PremioMetadataCache.RegisterChosenEpisodeStream(resolvedTitle, season, episode, mediaSourceId);
+            }
+
             // 2. Write direct URL straight to the episode's existing .strm file if in library!
             if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
             {
@@ -1069,11 +1021,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             // 3. Also write/update via StrmFileService
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
                 resolvedTitle,
-                item.Year,
+                resolvedYear,
                 new Uri(streamUrl),
                 isTv,
                 season,
                 episode,
+                forceOverwrite: true,
                 cancellationToken).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
@@ -1641,13 +1594,13 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         return new Guid(hash.AsSpan(0, 16));
     }
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Intercepted PlaybackInfo request: {Path}")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: >>> Intercepted PlaybackInfo request: {Path} <<<")]
     private static partial void LogInterceptedPlaybackInfo(ILogger logger, string path);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Extracted ItemId: {ItemId}")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Extracted ItemId: {ItemId}")]
     private static partial void LogExtractedItemId(ILogger logger, Guid itemId);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Resolving item for playback: {Title}")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Resolving item for playback: {Title}")]
     private static partial void LogResolvingItemForPlayback(ILogger logger, string title);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Search interception failed for query '{SearchTerm}': {ErrorMessage}")]
@@ -1656,7 +1609,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Playback resolution failed for title '{Title}': {ErrorMessage}")]
     private static partial void LogPlaybackResolutionFailed(ILogger logger, string title, string errorMessage);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl}")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: >>> Successfully resolved stream for '{Title}' (Magnet: {InfoHash}) via Premiumize: {StreamUrl} <<<")]
     private static partial void LogStreamResolved(ILogger logger, string title, string infoHash, string streamUrl);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to enrich existing library item '{Title}': {ErrorMessage}")]

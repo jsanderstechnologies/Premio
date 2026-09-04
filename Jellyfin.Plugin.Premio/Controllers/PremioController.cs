@@ -195,6 +195,27 @@ public sealed partial class PremioController : ControllerBase
                 resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync(cachedItem.MediaType ?? (isTv ? "tv" : "movie"), cachedItem.Id, cancellationToken).ConfigureAwait(false);
             }
 
+            if (string.IsNullOrWhiteSpace(resolvedImdbId) && requestedGuid != Guid.Empty)
+            {
+                var epLibItem = _libraryManager.GetItemById(requestedGuid);
+                if (epLibItem is Episode epLookup)
+                {
+                    resolvedImdbId = epLookup.GetProviderId("Imdb");
+                    if (string.IsNullOrWhiteSpace(resolvedImdbId))
+                    {
+                        var sLookup = epLookup.Series ?? (epLookup.SeriesId.HasValue ? _libraryManager.GetItemById(epLookup.SeriesId.Value) as Series : epLookup.FindParent<Series>());
+                        if (sLookup is not null)
+                        {
+                            resolvedImdbId = sLookup.GetProviderId("Imdb");
+                            if (string.IsNullOrWhiteSpace(resolvedImdbId) && int.TryParse(sLookup.GetProviderId("Tmdb"), out var sTmdbId))
+                            {
+                                resolvedImdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", sTmdbId, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
+                    }
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(resolvedImdbId))
             {
                 var queryTitle = !string.IsNullOrWhiteSpace(title) ? title : cachedItem?.DisplayTitle;
@@ -240,6 +261,11 @@ public sealed partial class PremioController : ControllerBase
 
             LogStreamResolved(_logger, resolvedTitle, targetHash, streamUrl);
 
+            if (isTvShow && targetSeason > 0 && targetEpisode > 0 && !string.IsNullOrWhiteSpace(targetHash))
+            {
+                PremioMetadataCache.RegisterChosenEpisodeStream(resolvedTitle, targetSeason, targetEpisode, targetHash);
+            }
+
             // Write direct stream URL to the episode's actual file on disk if in library
             if (requestedGuid != Guid.Empty)
             {
@@ -259,6 +285,7 @@ public sealed partial class PremioController : ControllerBase
                 isTvShow,
                 targetSeason,
                 targetEpisode,
+                forceOverwrite: true,
                 cancellationToken).ConfigureAwait(false);
 
             var posterUrl = cachedItem?.PosterUrl;
@@ -421,14 +448,23 @@ public sealed partial class PremioController : ControllerBase
             if (libItem is Episode ep)
             {
                 request.IsTv = true;
-                if (string.IsNullOrWhiteSpace(request.Title))
+                if (!request.Season.HasValue || request.Season.Value <= 0)
                 {
-                    request.Title = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Name;
+                    request.Season = ep.AiredSeasonNumber ?? ep.ParentIndexNumber ?? 1;
                 }
 
-                request.Season ??= ep.AiredSeasonNumber ?? ep.ParentIndexNumber ?? 1;
-                request.Episode ??= ep.IndexNumber ?? 1;
-                request.Year ??= ep.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? ep.Series?.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+                if (!request.Episode.HasValue || request.Episode.Value <= 0)
+                {
+                    request.Episode = ep.IndexNumber ?? 1;
+                }
+
+                var series = ep.Series ?? (ep.SeriesId.HasValue ? _libraryManager.GetItemById(ep.SeriesId.Value) as Series : ep.FindParent<Series>());
+                if (string.IsNullOrWhiteSpace(request.Title))
+                {
+                    request.Title = ep.SeriesName ?? series?.Name ?? ep.Name;
+                }
+
+                request.Year ??= series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? ep.ProductionYear?.ToString(CultureInfo.InvariantCulture);
             }
             else if (libItem is not null && string.IsNullOrWhiteSpace(request.Title))
             {
@@ -443,6 +479,28 @@ public sealed partial class PremioController : ControllerBase
             if (PremioMetadataCache.TryGetStreamHash(mediaGuid, out var mappedTorrentHash))
             {
                 request.InfoHash = mappedTorrentHash;
+            }
+        }
+
+        // 3. If infoHash is still empty, auto-resolve best stream for episode from Torrentio
+        if (string.IsNullOrWhiteSpace(request.InfoHash) && libItem is Episode epFallback)
+        {
+            var epSeries = epFallback.Series ?? (epFallback.SeriesId.HasValue ? _libraryManager.GetItemById(epFallback.SeriesId.Value) as Series : epFallback.FindParent<Series>());
+            var imdbId = epFallback.GetProviderId("Imdb") ?? epSeries?.GetProviderId("Imdb");
+            if (string.IsNullOrWhiteSpace(imdbId) && epSeries is not null && int.TryParse(epSeries.GetProviderId("Tmdb"), out var sTmdb))
+            {
+                imdbId = await _tmdbClient.GetExternalImdbIdAsync("tv", sTmdb, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!string.IsNullOrWhiteSpace(imdbId))
+            {
+                var sNum = request.Season ?? 1;
+                var epNum = request.Episode ?? 1;
+                var streams = await _torrentioClient.GetSeriesStreamsAsync(imdbId, sNum, epNum, request.Title, request.Year, cancellationToken).ConfigureAwait(false);
+                if (streams.Count > 0)
+                {
+                    request.InfoHash = streams[0].InfoHash;
+                }
             }
         }
 
@@ -1089,8 +1147,10 @@ public sealed partial class PremioController : ControllerBase
 
                     const title = el.getAttribute('data-title') || '';
                     const year = el.getAttribute('data-year') || '';
-                    const season = parseInt(el.getAttribute('data-season'), 10) || 0;
-                    const episode = parseInt(el.getAttribute('data-episode'), 10) || 0;
+                    const sRaw = el.getAttribute('data-season');
+                    const eRaw = el.getAttribute('data-episode');
+                    const season = sRaw ? parseInt(sRaw, 10) : null;
+                    const episode = eRaw ? parseInt(eRaw, 10) : null;
 
                     const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
                     const apiUrl = (window.ApiClient && typeof ApiClient.getUrl === 'function') ? ApiClient.getUrl('Premio/AddStream') : '/Premio/AddStream';
@@ -1127,12 +1187,16 @@ public sealed partial class PremioController : ControllerBase
                                 b.disabled = false;
                                 b.style.pointerEvents = 'auto';
                             });
-                            setTimeout(function() { location.reload(); }, 1200);
                         } else {
                             if (statusEl) {
                                 statusEl.textContent = 'Error: ' + (data && data.message ? data.message : 'Failed');
                                 statusEl.style.color = '#ef4444';
                             }
+                            playBtns.forEach(function(b) {
+                                b.style.display = '';
+                                b.disabled = false;
+                                b.style.pointerEvents = 'auto';
+                            });
                         }
                     } catch (err) {
                         console.error('[Premio] Failed to add stream:', err);
@@ -1140,6 +1204,11 @@ public sealed partial class PremioController : ControllerBase
                             statusEl.textContent = 'Error: ' + err.message;
                             statusEl.style.color = '#ef4444';
                         }
+                        playBtns.forEach(function(b) {
+                            b.style.display = '';
+                            b.disabled = false;
+                            b.style.pointerEvents = 'auto';
+                        });
                     }
                 }, true);
             })();
