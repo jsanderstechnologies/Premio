@@ -40,6 +40,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         @"[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}|[a-fA-F0-9]{32}",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly char[] LineSeparators = ['\r', '\n'];
+
     private readonly TmdbClient _tmdbClient;
     private readonly TvdbClient _tvdbClient;
     private readonly ImdbClient _imdbClient;
@@ -1088,7 +1090,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
                     {
-                        var firstLine = trimmed.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                        var newlineIdx = trimmed.IndexOfAny(LineSeparators);
+                        var firstLine = newlineIdx >= 0 ? trimmed[..newlineIdx].Trim() : trimmed;
                         return firstLine;
                     }
 
