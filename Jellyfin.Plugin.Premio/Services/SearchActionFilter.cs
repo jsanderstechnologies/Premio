@@ -833,6 +833,74 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             itemDto.MediaStreams = defaultStreams;
             itemDto.MediaSources = mediaSources.ToArray();
 
+            if (isTv && streams.Count > 0)
+            {
+                var sbDropdown = new StringBuilder();
+                var encodedTitle = WebUtility.HtmlEncode(searchTitle ?? "Show");
+                var encodedYear = WebUtility.HtmlEncode(itemYear ?? string.Empty);
+                var seasonStr = seasonNumber.ToString(CultureInfo.InvariantCulture);
+                var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
+                var itemIdStr = itemDto.Id != Guid.Empty ? itemDto.Id.ToString() : string.Empty;
+
+                sbDropdown.Append("<div class=\"selectContainer selectSourceContainer premio-stream-container focusable\" onclick=\"event.stopPropagation();\" style=\"margin: 10px 0 8px 0; width: 100%; max-width: 540px;\">");
+                sbDropdown.Append("<label class=\"selectLabel selectLabel-focused\" style=\"display: block; font-size: 12px; font-weight: 600; color: #00a4dc; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;\">Version</label>");
+                sbDropdown.Append("<div style=\"display: flex; align-items: center; gap: 8px;\">");
+                sbDropdown.Append("<select is=\"emby-select\" class=\"emby-select-withcolor emby-select premio-stream-select\" style=\"flex: 1; font-size: 13px; padding: 7px 12px; border-radius: 4px; border: 1px solid #444; background: rgba(26,26,26,0.95); color: #fff; cursor: pointer;\" ");
+                sbDropdown.Append("data-itemid=\"").Append(itemIdStr).Append("\" ");
+                sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
+                sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
+                sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
+                sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
+                sbDropdown.Append("onchange=\"(function(s){try{var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;if(st){st.textContent='Sending to Premiumize...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var apiUrl='/Premio/AddStream';if(window.ApiClient&&typeof ApiClient.getUrl==='function'){try{apiUrl=ApiClient.getUrl('Premio/AddStream');}catch(e){}}var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}var payload={itemId:s.getAttribute('data-itemid')||'',title:s.getAttribute('data-title')||'',year:s.getAttribute('data-year')||'',isTv:true,season:parseInt(s.getAttribute('data-season'),10)||1,episode:parseInt(s.getAttribute('data-episode'),10)||1,infoHash:v};fetch(apiUrl,{method:'POST',headers:h,body:JSON.stringify(payload)}).then(function(r){if(!r.ok){throw new Error('HTTP '+r.status);}return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Stream ready! Saved to .strm';st.style.color='#10b981';}}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){console.error('[Premio] Save failed:',e);if(st){st.textContent='Error: '+e.message;st.style.color='#ef4444';}});}catch(err){console.error('[Premio] onchange error:',err);}})(this);\">");
+
+                if (!hasRealChosenStream)
+                {
+                    sbDropdown.Append("<option value=\"\" disabled selected>Select a Stream</option>");
+                }
+
+                for (var sIdx = 0; sIdx < streams.Count; sIdx++)
+                {
+                    var st = streams[sIdx];
+                    var sz = !string.IsNullOrWhiteSpace(st.FileSize) ? $" ({st.FileSize})" : string.Empty;
+
+                    var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
+                    var releaseName = st.CleanReleaseName;
+                    string text;
+                    if (releaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase))
+                    {
+                        text = $"{releaseName}{sz}";
+                    }
+                    else
+                    {
+                        text = $"{searchTitle} - {epCode} - {st.Quality}{sz} - {releaseName}";
+                    }
+
+                    var isSelected = false;
+                    if (!string.IsNullOrWhiteSpace(chosenInfoHash) && string.Equals(st.InfoHash, chosenInfoHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        isSelected = true;
+                    }
+                    else if (hasRealChosenStream && string.IsNullOrWhiteSpace(chosenInfoHash) && sIdx == 0)
+                    {
+                        isSelected = true;
+                    }
+
+                    var selAttr = isSelected ? "selected=\"selected\"" : string.Empty;
+                    sbDropdown.Append("<option value=\"").Append(WebUtility.HtmlEncode(st.InfoHash)).Append("\" ").Append(selAttr).Append('>').Append(WebUtility.HtmlEncode(text)).Append("</option>");
+                }
+
+                sbDropdown.Append("""
+                        </select>
+                        <span class="stream-save-status" style="font-size: 12px; font-weight: 600; white-space: nowrap; margin-left: 6px;"></span>
+                    </div>
+                    <div class="selectUnderline" style="height: 1px; background: rgba(255,255,255,0.1); margin-top: 4px;"></div>
+                </div>
+                """);
+
+                var origOverview = itemDto.Overview ?? string.Empty;
+                itemDto.Overview = sbDropdown.ToString() + (string.IsNullOrWhiteSpace(origOverview) ? string.Empty : $"<div style=\"margin-top: 6px;\">{origOverview}</div>");
+            }
+
             itemDto.PlayAccess = PlayAccess.Full;
             itemDto.LocationType = LocationType.FileSystem;
             itemDto.CanDownload = true;

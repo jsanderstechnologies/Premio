@@ -1125,14 +1125,6 @@ public sealed partial class PremioController : ControllerBase
                         statusEl.style.color = '#f59e0b';
                     }
 
-                    const card = el.closest('.card, .listItem, .detailRibbon, .itemDetailPage') || document;
-                    const playBtns = card.querySelectorAll('button[data-action=play], .cardOverlayButton-br, .cardOverlayPlayButton, .listItemImageButton, .mainDetailButtons .btnPlay');
-                    playBtns.forEach(function(b) {
-                        b.style.display = 'none';
-                        b.disabled = true;
-                        b.style.pointerEvents = 'none';
-                    });
-
                     let itemId = el.getAttribute('data-itemid') || '';
                     if (!itemId) {
                         const itemEl = el.closest('[data-id], [data-itemid]');
@@ -1154,7 +1146,10 @@ public sealed partial class PremioController : ControllerBase
                     const episode = eRaw ? parseInt(eRaw, 10) : null;
 
                     const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
-                    const apiUrl = (window.ApiClient && typeof ApiClient.getUrl === 'function') ? ApiClient.getUrl('Premio/AddStream') : '/Premio/AddStream';
+                    let apiUrl = '/Premio/AddStream';
+                    if (window.ApiClient && typeof ApiClient.getUrl === 'function') {
+                        try { apiUrl = ApiClient.getUrl('Premio/AddStream'); } catch(e) {}
+                    }
                     const headers = { 'Content-Type': 'application/json' };
                     if (tok) { headers['X-Emby-Token'] = tok; }
 
@@ -1183,21 +1178,11 @@ public sealed partial class PremioController : ControllerBase
                                 statusEl.textContent = '✓ Stream ready! Saved to .strm';
                                 statusEl.style.color = '#10b981';
                             }
-                            playBtns.forEach(function(b) {
-                                b.style.display = '';
-                                b.disabled = false;
-                                b.style.pointerEvents = 'auto';
-                            });
                         } else {
                             if (statusEl) {
                                 statusEl.textContent = 'Error: ' + (data && data.message ? data.message : 'Failed');
                                 statusEl.style.color = '#ef4444';
                             }
-                            playBtns.forEach(function(b) {
-                                b.style.display = '';
-                                b.disabled = false;
-                                b.style.pointerEvents = 'auto';
-                            });
                         }
                     } catch (err) {
                         console.error('[Premio] Failed to add stream:', err);
@@ -1205,11 +1190,6 @@ public sealed partial class PremioController : ControllerBase
                             statusEl.textContent = 'Error: ' + err.message;
                             statusEl.style.color = '#ef4444';
                         }
-                        playBtns.forEach(function(b) {
-                            b.style.display = '';
-                            b.disabled = false;
-                            b.style.pointerEvents = 'auto';
-                        });
                     }
                 }, true);
             })();
