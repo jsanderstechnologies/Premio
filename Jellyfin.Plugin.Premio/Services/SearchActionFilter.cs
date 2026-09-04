@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Premio.Models;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
@@ -924,18 +925,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var mediaSourceId = ExtractMediaSourceId(context);
         var requestedId = ExtractItemId(context);
 
-        if (!string.IsNullOrWhiteSpace(mediaSourceId) && Guid.TryParse(mediaSourceId, out var parsedMediaGuid) && PremioMetadataCache.TryGetStreamHash(parsedMediaGuid, out var mappedHash))
-        {
-            mediaSourceId = mappedHash;
-        }
-
-        // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
-        var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
-
         BaseItem? libItem = requestedId != Guid.Empty ? _libraryManager.GetItemById(requestedId) : null;
         var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase) || libItem is Episode || libItem is Series;
         var season = 1;
         var episode = 1;
+        var resolvedTitle = item.DisplayTitle;
 
         if (libItem is Episode ep)
         {
@@ -945,7 +939,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Series?.Name;
             if (!string.IsNullOrWhiteSpace(showTitle))
             {
-                item.Title = showTitle;
+                resolvedTitle = showTitle;
             }
         }
         else if (isTv)
@@ -977,7 +971,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
         var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
 
-        if (!isRealInfoHash && isTv && !string.IsNullOrWhiteSpace(item.DisplayTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(item.DisplayTitle, season, episode, out var chosenHash))
+        if (!isRealInfoHash && isTv && !string.IsNullOrWhiteSpace(resolvedTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(resolvedTitle, season, episode, out var chosenHash))
         {
             mediaSourceId = chosenHash;
             isRealInfoHash = true;
@@ -1010,7 +1004,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             }
         }
 
-        if (!isRealInfoHash && isTv && PremioMetadataCache.TryGetChosenEpisodeStream(item.DisplayTitle, season, episode, out var fallbackChosenHash))
+        if (!isRealInfoHash && isTv && PremioMetadataCache.TryGetChosenEpisodeStream(resolvedTitle, season, episode, out var fallbackChosenHash))
         {
             mediaSourceId = fallbackChosenHash;
             isRealInfoHash = true;
@@ -1024,7 +1018,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             if (string.IsNullOrWhiteSpace(imdbId))
             {
-                var searchResults = await _tmdbClient.SearchMultiAsync(item.DisplayTitle, cancellationToken).ConfigureAwait(false);
+                var searchResults = await _tmdbClient.SearchMultiAsync(resolvedTitle, cancellationToken).ConfigureAwait(false);
                 var match = FindMatchingItem(searchResults, isTv);
 
                 if (match is not null)
@@ -1036,8 +1030,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (!string.IsNullOrWhiteSpace(imdbId))
             {
                 var streams = isTv
-                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false)
-                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, item.DisplayTitle, item.Year, cancellationToken).ConfigureAwait(false);
+                    ? await _torrentioClient.GetSeriesStreamsAsync(imdbId, season, episode, resolvedTitle, item.Year, cancellationToken).ConfigureAwait(false)
+                    : await _torrentioClient.GetMovieStreamsAsync(imdbId, resolvedTitle, item.Year, cancellationToken).ConfigureAwait(false);
 
                 if (streams.Count > 0)
                 {
@@ -1063,18 +1057,18 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return null;
             }
 
-            LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
+            LogStreamResolved(_logger, resolvedTitle, mediaSourceId, streamUrl);
 
             // 2. Write direct URL straight to the episode's existing .strm file if in library!
             if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
             {
                 await File.WriteAllTextAsync(libItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
-                LogAddedStream(_logger, isTv ? $"{item.DisplayTitle} - S{season:D2}E{episode:D2}" : item.DisplayTitle, libItem.Path);
+                LogAddedStream(_logger, isTv ? $"{resolvedTitle} - S{season:D2}E{episode:D2}" : resolvedTitle, libItem.Path);
             }
 
             // 3. Also write/update via StrmFileService
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
-                item.DisplayTitle,
+                resolvedTitle,
                 item.Year,
                 new Uri(streamUrl),
                 isTv,
@@ -1095,7 +1089,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         }
         catch (Exception ex)
         {
-            LogPlaybackResolutionFailed(_logger, item.DisplayTitle, ex.Message);
+            LogPlaybackResolutionFailed(_logger, resolvedTitle, ex.Message);
             return null;
         }
     }
@@ -1667,4 +1661,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Failed to enrich existing library item '{Title}': {ErrorMessage}")]
     private static partial void LogLibraryEnrichmentFailed(ILogger logger, string title, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: Added stream for '{Title}' -> '{Path}'")]
+    private static partial void LogAddedStream(ILogger logger, string title, string path);
 }
