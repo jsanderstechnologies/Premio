@@ -34,9 +34,10 @@ public sealed class PremioWebInjectionMiddleware
         ArgumentNullException.ThrowIfNull(context);
 
         var path = context.Request.Path.Value ?? string.Empty;
-        var isHtmlPage = path.Equals("/web/index.html", StringComparison.OrdinalIgnoreCase) ||
-                         path.Equals("/web/", StringComparison.OrdinalIgnoreCase) ||
+        var isHtmlPage = path.Equals("/", StringComparison.OrdinalIgnoreCase) ||
                          path.Equals("/web", StringComparison.OrdinalIgnoreCase) ||
+                         path.Equals("/web/", StringComparison.OrdinalIgnoreCase) ||
+                         path.Equals("/web/index.html", StringComparison.OrdinalIgnoreCase) ||
                          path.EndsWith("/index.html", StringComparison.OrdinalIgnoreCase);
 
         if (!isHtmlPage)
@@ -45,9 +46,10 @@ public sealed class PremioWebInjectionMiddleware
             return;
         }
 
-        // Strip caching validation headers so static file middleware cannot return 304 Not Modified
+        // Strip caching and compression validation headers so upstream middleware cannot return 304 or compressed gzip/br content
         context.Request.Headers.Remove("If-None-Match");
         context.Request.Headers.Remove("If-Modified-Since");
+        context.Request.Headers.Remove("Accept-Encoding");
 
         var originalBodyFeature = context.Features.Get<IHttpResponseBodyFeature>();
         using var newBodyStream = new MemoryStream();
@@ -73,11 +75,16 @@ public sealed class PremioWebInjectionMiddleware
                     html = html.Replace("</body>", ScriptTag, StringComparison.OrdinalIgnoreCase);
                     var modifiedBytes = Encoding.UTF8.GetBytes(html);
                     context.Response.Headers.Remove("ETag");
+                    context.Response.Headers.Remove("Content-Encoding");
+                    context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                    context.Response.Headers["Pragma"] = "no-cache";
+                    context.Response.Headers["Expires"] = "0";
                     context.Response.Headers.ContentLength = modifiedBytes.Length;
                     if (originalBodyFeature is not null)
                     {
                         await originalBodyFeature.Stream.WriteAsync(modifiedBytes, context.RequestAborted).ConfigureAwait(false);
                     }
+
                     return;
                 }
             }

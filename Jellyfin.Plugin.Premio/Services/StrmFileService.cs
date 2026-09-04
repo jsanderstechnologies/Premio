@@ -444,7 +444,7 @@ public sealed partial class StrmFileService
 
                 if (!File.Exists(strmFilePath) || Config.OverwriteExistingStrmFiles)
                 {
-                    var streamUrl = $"/Premio/Stream?type=tv&imdbId={Uri.EscapeDataString(imdbId)}&season={sNum}&episode={ep}&title={Uri.EscapeDataString(title)}&year={cleanYear ?? string.Empty}";
+                    var streamUrl = $"http://127.0.0.1:8096/Premio/Stream?type=tv&imdbId={Uri.EscapeDataString(imdbId)}&season={sNum}&episode={ep}&title={Uri.EscapeDataString(title)}&year={cleanYear ?? string.Empty}";
                     await File.WriteAllTextAsync(strmFilePath, streamUrl, cancellationToken).ConfigureAwait(false);
                 }
             }

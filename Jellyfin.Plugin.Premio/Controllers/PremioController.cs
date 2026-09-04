@@ -132,6 +132,12 @@ public sealed partial class PremioController : ControllerBase
 
         var isRealInfoHash = !string.IsNullOrWhiteSpace(targetHash) && targetHash.Length == 40 && !string.Equals(targetHash, requestedGuid.ToString("N"), StringComparison.OrdinalIgnoreCase);
 
+        if (!isRealInfoHash && requestedGuid != Guid.Empty && PremioMetadataCache.TryGetChosenEpisodeStream(requestedGuid, out var idChosenHash))
+        {
+            targetHash = idChosenHash;
+            isRealInfoHash = true;
+        }
+
         if (!isRealInfoHash && requestedGuid != Guid.Empty)
         {
             var libItem = _libraryManager.GetItemById(requestedGuid);
@@ -147,24 +153,54 @@ public sealed partial class PremioController : ControllerBase
                 }
             }
 
+            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
+            {
+                var sidecarPath = libItem.Path + ".premio";
+                if (System.IO.File.Exists(sidecarPath))
+                {
+                    try
+                    {
+                        var sidecarContent = (await System.IO.File.ReadAllTextAsync(sidecarPath, cancellationToken).ConfigureAwait(false))?.Trim();
+                        if (!string.IsNullOrWhiteSpace(sidecarContent) && sidecarContent.Length == 40)
+                        {
+                            targetHash = sidecarContent;
+                            isRealInfoHash = true;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
+                }
+            }
+
             if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && System.IO.File.Exists(libItem.Path))
             {
                 try
                 {
                     var fileContent = await System.IO.File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
                     var trimmed = fileContent?.Trim() ?? string.Empty;
-                    if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    if ((trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) &&
+                        !trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return Redirect(trimmed);
-                        }
+                        var newlineIdx = trimmed.IndexOfAny(['\r', '\n']);
+                        var firstLine = newlineIdx >= 0 ? trimmed[..newlineIdx].Trim() : trimmed;
+                        return Redirect(firstLine);
+                    }
 
-                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
-                        if (hashMatch.Success)
+                    var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                    if (hashMatch.Success)
+                    {
+                        targetHash = hashMatch.Groups[1].Value;
+                        isRealInfoHash = true;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(imdbId))
+                    {
+                        var imdbMatch = Regex.Match(trimmed, @"imdbId=([^&\s]+)", RegexOptions.IgnoreCase);
+                        if (imdbMatch.Success)
                         {
-                            targetHash = hashMatch.Groups[1].Value;
-                            isRealInfoHash = true;
+                            imdbId = Uri.UnescapeDataString(imdbMatch.Groups[1].Value);
                         }
                     }
                 }
@@ -267,14 +303,36 @@ public sealed partial class PremioController : ControllerBase
                 PremioMetadataCache.RegisterChosenEpisodeStream(resolvedTitle, targetSeason, targetEpisode, targetHash);
             }
 
+            var contentToWrite = !string.IsNullOrWhiteSpace(targetHash)
+                ? $"{streamUrl}{Environment.NewLine}# Premio: infoHash={targetHash}"
+                : streamUrl;
+
             // Write direct stream URL to the episode's actual file on disk if in library
-            if (requestedGuid != Guid.Empty)
+            BaseItem? libItem = requestedGuid != Guid.Empty ? _libraryManager.GetItemById(requestedGuid) : null;
+            if (libItem is null && isTvShow)
             {
-                var libraryItem = _libraryManager.GetItemById(requestedGuid);
-                if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
+                libItem = FindLibraryEpisode(resolvedTitle, targetSeason, targetEpisode);
+            }
+
+            if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
+            {
+                if (!string.IsNullOrWhiteSpace(targetHash))
                 {
-                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
-                    LogAddedStream(_logger, isTvShow ? $"{resolvedTitle} - S{targetSeason:D2}E{targetEpisode:D2}" : resolvedTitle, libraryItem.Path);
+                    PremioMetadataCache.RegisterChosenEpisodeStream(libItem.Id, targetHash);
+                }
+
+                await System.IO.File.WriteAllTextAsync(libItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
+                LogAddedStream(_logger, isTvShow ? $"{resolvedTitle} - S{targetSeason:D2}E{targetEpisode:D2}" : resolvedTitle, libItem.Path);
+                if (!string.IsNullOrWhiteSpace(targetHash))
+                {
+                    try
+                    {
+                        await System.IO.File.WriteAllTextAsync(libItem.Path + ".premio", targetHash, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore sidecar write exceptions
+                    }
                 }
             }
 
@@ -485,6 +543,17 @@ public sealed partial class PremioController : ControllerBase
             }
         }
 
+        if (libItem is null && request.IsTv && !string.IsNullOrWhiteSpace(request.Title) && request.Season.HasValue && request.Episode.HasValue)
+        {
+            libItem = FindLibraryEpisode(request.Title, request.Season.Value, request.Episode.Value);
+            if (libItem is Episode foundEp)
+            {
+                request.ItemId = foundEp.Id.ToString();
+                var s = foundEp.Series ?? (foundEp.SeriesId != Guid.Empty ? _libraryManager.GetItemById(foundEp.SeriesId) as Series : foundEp.FindParent<Series>());
+                request.Year ??= s?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? foundEp.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
         // 2. If infoHash is a deterministic GUID (MediaSourceId from native dropdown), resolve to torrent hash
         if (!string.IsNullOrWhiteSpace(request.InfoHash) && Guid.TryParse(request.InfoHash, out var mediaGuid))
         {
@@ -571,26 +640,38 @@ public sealed partial class PremioController : ControllerBase
                 ? $"{streamUrl}{Environment.NewLine}# Premio: infoHash={request.InfoHash}"
                 : streamUrl;
 
-            // 1. If itemId is provided, write directly to Jellyfin's exact episode item path
+            // 1. If itemId is provided or resolved in library, write directly to Jellyfin's exact episode item path
+            BaseItem? libraryItem = null;
             if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var targetItemGuid))
             {
-                var libraryItem = _libraryManager.GetItemById(targetItemGuid);
-                if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
-                {
-                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
-                    strmPath = libraryItem.Path;
-                    LogAddedStream(_logger, formattedTitle, strmPath);
+                libraryItem = _libraryManager.GetItemById(targetItemGuid);
+            }
 
-                    if (!string.IsNullOrWhiteSpace(request.InfoHash))
+            if (libraryItem is null && libItem is not null)
+            {
+                libraryItem = libItem;
+            }
+
+            if (libraryItem is null && request.IsTv && !string.IsNullOrWhiteSpace(request.Title) && request.Season.HasValue && request.Episode.HasValue)
+            {
+                libraryItem = FindLibraryEpisode(request.Title, request.Season.Value, request.Episode.Value);
+            }
+
+            if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
+            {
+                await System.IO.File.WriteAllTextAsync(libraryItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
+                strmPath = libraryItem.Path;
+                LogAddedStream(_logger, formattedTitle, strmPath);
+
+                if (!string.IsNullOrWhiteSpace(request.InfoHash))
+                {
+                    try
                     {
-                        try
-                        {
-                            await System.IO.File.WriteAllTextAsync(libraryItem.Path + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch
-                        {
-                            // Ignore sidecar write exceptions
-                        }
+                        await System.IO.File.WriteAllTextAsync(libraryItem.Path + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore sidecar write exceptions
                     }
                 }
             }
@@ -1135,26 +1216,14 @@ public sealed partial class PremioController : ControllerBase
             (function() {
                 console.log('[Premio] Client script loaded.');
 
-                // Universal change listener: captures stream/version selection anywhere in Jellyfin Web
-                document.addEventListener('change', async function(e) {
-                    const el = e.target;
+                window.premioAddStream = async function(el) {
                     if (!el || el.tagName !== 'SELECT') return;
-
-                    const isStreamSelect = el.hasAttribute('data-title') ||
-                                           el.hasAttribute('data-season') ||
-                                           el.closest('.selectSourceContainer') ||
-                                           el.closest('.premio-card-stream-wrap') ||
-                                           el.id === 'selectSource' ||
-                                           (el.className && typeof el.className === 'string' && el.className.includes('selectSource'));
-
-                    if (!isStreamSelect) return;
-
                     const val = el.value;
                     if (!val) return;
 
-                    console.log('[Premio] Captured stream selection:', val);
+                    console.log('[Premio] premioAddStream triggered:', val);
 
-                    const container = el.closest('.selectContainer') || el.closest('.premio-card-stream-wrap') || el.parentElement;
+                    const container = el.closest('.selectContainer') || el.closest('.premio-stream-container') || el.closest('.selectSourceContainer') || el.parentElement;
                     let statusEl = container ? container.querySelector('.stream-save-status') : null;
                     if (!statusEl && container) {
                         statusEl = document.createElement('span');
@@ -1175,14 +1244,14 @@ public sealed partial class PremioController : ControllerBase
                     }
                     if (!itemId) {
                         const hash = window.location.hash || '';
-                        if (hash.includes('?')) {
+                        if (hash.indexOf('?') >= 0) {
                             const hashParams = new URLSearchParams(hash.split('?')[1]);
                             itemId = hashParams.get('id') || '';
                         }
                     }
                     if (!itemId) {
                         const search = window.location.search || '';
-                        if (search.includes('?')) {
+                        if (search.indexOf('?') >= 0) {
                             const searchParams = new URLSearchParams(search);
                             itemId = searchParams.get('id') || '';
                         }
@@ -1250,7 +1319,41 @@ public sealed partial class PremioController : ControllerBase
                             statusEl.style.color = '#ef4444';
                         }
                     }
+                };
+
+                // Universal change listener on document
+                document.addEventListener('change', function(e) {
+                    const el = e.target;
+                    if (!el || el.tagName !== 'SELECT') return;
+
+                    const isStreamSelect = el.classList.contains('premio-stream-select') ||
+                                           el.id === 'selectSource' ||
+                                           (el.className && typeof el.className === 'string' && el.className.includes('selectSource')) ||
+                                           el.hasAttribute('data-title') ||
+                                           el.hasAttribute('data-season') ||
+                                           el.closest('.selectSourceContainer') ||
+                                           el.closest('.premio-stream-container');
+
+                    if (isStreamSelect) {
+                        window.premioAddStream(el);
+                    }
                 }, true);
+
+                // MutationObserver to attach directly to dropdowns as they appear in the DOM
+                function scanAndBind() {
+                    const selects = document.querySelectorAll('.premio-stream-select, #selectSource, .selectSource');
+                    for (let i = 0; i < selects.length; i++) {
+                        const s = selects[i];
+                        if (!s._premioBound) {
+                            s._premioBound = true;
+                            s.addEventListener('change', function() { window.premioAddStream(this); });
+                        }
+                    }
+                }
+                scanAndBind();
+                if (window.MutationObserver) {
+                    new MutationObserver(scanAndBind).observe(document.body || document.documentElement, { childList: true, subtree: true });
+                }
             })();
             """;
 
@@ -1302,6 +1405,45 @@ public sealed partial class PremioController : ControllerBase
         }
 
         return directDl.Location;
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Library lookup failure must not crash controller.")]
+    private Episode? FindLibraryEpisode(string title, int seasonNumber, int episodeNumber)
+    {
+        try
+        {
+            var query = new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                SearchTerm = title
+            };
+            var items = _libraryManager.GetItemList(query);
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (items[i] is Episode ep)
+                {
+                    var epSeason = ep.AiredSeasonNumber ?? ep.ParentIndexNumber ?? 1;
+                    var epNumber = ep.IndexNumber ?? 1;
+                    if (epSeason == seasonNumber && epNumber == episodeNumber)
+                    {
+                        var s = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
+                        var seriesName = ep.SeriesName ?? s?.Name;
+                        if (string.IsNullOrWhiteSpace(seriesName) ||
+                            seriesName.Contains(title, StringComparison.OrdinalIgnoreCase) ||
+                            title.Contains(seriesName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return ep;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore lookup exceptions
+        }
+
+        return null;
     }
 
     // -------------------------------------------------------------------------

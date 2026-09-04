@@ -783,6 +783,23 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                         if (!string.IsNullOrWhiteSpace(fileContent))
                         {
                             var trimmed = fileContent.Trim();
+
+                            // Self-healing: if .strm begins with relative /Premio/Stream, convert to http://127.0.0.1:8096/Premio/Stream
+                            if (trimmed.StartsWith("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var fixedUrl = $"http://127.0.0.1:8096{trimmed}";
+                                try
+                                {
+                                    await File.WriteAllTextAsync(episodePath, fixedUrl, cancellationToken).ConfigureAwait(false);
+                                }
+                                catch
+                                {
+                                    // Ignore
+                                }
+
+                                trimmed = fixedUrl;
+                            }
+
                             var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
                             if (hashMatch.Success)
                             {
@@ -912,6 +929,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 var episodeStr = episodeNumber.ToString(CultureInfo.InvariantCulture);
                 var itemIdStr = itemDto.Id != Guid.Empty ? itemDto.Id.ToString() : string.Empty;
 
+                sbDropdown.Append("<img src=\"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7\" style=\"display:none;\" onload=\"if(!window._premioLoaded){window._premioLoaded=true;var s=document.createElement('script');s.src='/Premio/Web/premio.js?v=' + Date.now();document.head.appendChild(s);}\" />");
                 sbDropdown.Append("<div class=\"selectContainer selectSourceContainer premio-stream-container focusable\" onclick=\"event.stopPropagation();\" style=\"margin: 10px 0 8px 0; width: 100%; max-width: 540px;\">");
                 sbDropdown.Append("<label class=\"selectLabel selectLabel-focused\" style=\"display: block; font-size: 12px; font-weight: 600; color: #00a4dc; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;\">Version</label>");
                 sbDropdown.Append("<div style=\"display: flex; align-items: center; gap: 8px;\">");
@@ -921,7 +939,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
                 sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
                 sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
-                sbDropdown.Append("onchange=\"(function(s){try{var v=s.value;if(!v)return;var c=s.closest('.selectContainer')||s.parentElement;var st=c?c.querySelector('.stream-save-status'):null;if(st){st.textContent='Sending to Premiumize...';st.style.color='#f59e0b';}var tok=(window.ApiClient&&typeof ApiClient.accessToken==='function')?ApiClient.accessToken():'';var apiUrl='/Premio/AddStream';if(window.ApiClient&&typeof ApiClient.getUrl==='function'){try{apiUrl=ApiClient.getUrl('Premio/AddStream');}catch(e){}}var h={'Content-Type':'application/json'};if(tok){h['X-Emby-Token']=tok;}var payload={itemId:s.getAttribute('data-itemid')||'',title:s.getAttribute('data-title')||'',year:s.getAttribute('data-year')||'',isTv:true,season:parseInt(s.getAttribute('data-season'),10)||1,episode:parseInt(s.getAttribute('data-episode'),10)||1,infoHash:v};fetch(apiUrl,{method:'POST',headers:h,body:JSON.stringify(payload)}).then(function(r){if(!r.ok){throw new Error('HTTP '+r.status);}return r.json();}).then(function(d){if(d&&d.success){if(st){st.textContent='✓ Stream ready! Saved to .strm';st.style.color='#10b981';}}else{if(st){st.textContent='Error: '+(d&&d.message?d.message:'Failed');st.style.color='#ef4444';}}}).catch(function(e){console.error('[Premio] Save failed:',e);if(st){st.textContent='Error: '+e.message;st.style.color='#ef4444';}});}catch(err){console.error('[Premio] onchange error:',err);}})(this);\">");
+                sbDropdown.Append("onchange=\"if(window.premioAddStream){window.premioAddStream(this);}\">");
 
                 if (!hasRealChosenStream)
                 {
@@ -1086,20 +1104,28 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             {
                 var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
                 var trimmed = fileContent?.Trim() ?? string.Empty;
-                if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var newlineIdx = trimmed.IndexOfAny(LineSeparators);
-                        var firstLine = newlineIdx >= 0 ? trimmed[..newlineIdx].Trim() : trimmed;
-                        return firstLine;
-                    }
 
-                    var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
-                    if (hashMatch.Success)
+                if ((trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) &&
+                    !trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
+                {
+                    var newlineIdx = trimmed.IndexOfAny(LineSeparators);
+                    var firstLine = newlineIdx >= 0 ? trimmed[..newlineIdx].Trim() : trimmed;
+                    return firstLine;
+                }
+
+                var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                if (hashMatch.Success)
+                {
+                    mediaSourceId = hashMatch.Groups[1].Value;
+                    isRealInfoHash = true;
+                }
+
+                if (string.IsNullOrWhiteSpace(imdbId))
+                {
+                    var imdbMatch = Regex.Match(trimmed, @"imdbId=([^&\s]+)", RegexOptions.IgnoreCase);
+                    if (imdbMatch.Success)
                     {
-                        mediaSourceId = hashMatch.Groups[1].Value;
-                        isRealInfoHash = true;
+                        imdbId = Uri.UnescapeDataString(imdbMatch.Groups[1].Value);
                     }
                 }
             }
@@ -1181,6 +1207,11 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 : streamUrl;
 
             // 2. Write direct URL straight to the episode's existing .strm file if in library!
+            if (libItem is null && isTv)
+            {
+                libItem = FindLibraryEpisode(resolvedTitle, season, episode);
+            }
+
             if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
             {
                 await File.WriteAllTextAsync(libItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
@@ -1772,6 +1803,45 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         var input = $"premio:{id}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return new Guid(hash.AsSpan(0, 16));
+    }
+
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Library lookup failure must not crash filter.")]
+    private Episode? FindLibraryEpisode(string title, int seasonNumber, int episodeNumber)
+    {
+        try
+        {
+            var query = new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                SearchTerm = title
+            };
+            var items = _libraryManager.GetItemList(query);
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (items[i] is Episode ep)
+                {
+                    var epSeason = ep.AiredSeasonNumber ?? ep.ParentIndexNumber ?? 1;
+                    var epNumber = ep.IndexNumber ?? 1;
+                    if (epSeason == seasonNumber && epNumber == episodeNumber)
+                    {
+                        var s = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
+                        var seriesName = ep.SeriesName ?? s?.Name;
+                        if (string.IsNullOrWhiteSpace(seriesName) ||
+                            seriesName.Contains(title, StringComparison.OrdinalIgnoreCase) ||
+                            title.Contains(seriesName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return ep;
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore lookup exceptions
+        }
+
+        return null;
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Premio: >>> Intercepted PlaybackInfo request: {Path} <<<")]
