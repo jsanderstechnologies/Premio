@@ -400,6 +400,14 @@ public sealed partial class PremioController : ControllerBase
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        LogAddStreamReceived(
+            _logger,
+            request.Title,
+            request.Season ?? 0,
+            request.Episode ?? 0,
+            request.InfoHash ?? "none",
+            request.ItemId ?? "none");
+
         if (string.IsNullOrWhiteSpace(request.InfoHash) && request.MagnetUrl is null)
         {
             return BadRequest(new { message = "infoHash or magnetUrl is required." });
@@ -1081,15 +1089,21 @@ public sealed partial class PremioController : ControllerBase
                             const chosenHash = e.target.value;
                             if (!chosenHash) return;
 
-                            status.textContent = 'Saving...';
+                            status.textContent = 'Sending to Premiumize...';
                             status.style.color = '#f59e0b';
                             select.disabled = true;
 
                             try {
-                                const saveRes = await fetch('/Premio/AddStream', {
+                                const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
+                                const apiUrl = (window.ApiClient && typeof ApiClient.getUrl === 'function') ? ApiClient.getUrl('Premio/AddStream') : '/Premio/AddStream';
+                                const h = { 'Content-Type': 'application/json' };
+                                if (tok) { h['X-Emby-Token'] = tok; }
+
+                                const saveRes = await fetch(apiUrl, {
                                     method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
+                                    headers: h,
                                     body: JSON.stringify({
+                                        itemId: itemId || '',
                                         title: data.title,
                                         year: data.year,
                                         isTv: true,
@@ -1099,9 +1113,13 @@ public sealed partial class PremioController : ControllerBase
                                     })
                                 });
 
+                                if (!saveRes.ok) {
+                                    throw new Error('HTTP ' + saveRes.status + ' ' + saveRes.statusText);
+                                }
+
                                 const saveJson = await saveRes.json();
-                                if (saveRes.ok && saveJson.success) {
-                                    status.textContent = '✓ Saved!';
+                                if (saveJson.success) {
+                                    status.textContent = '✓ Stream ready! Saved to .strm';
                                     status.style.color = '#10b981';
                                     if (playBtn) {
                                         playBtn.style.opacity = '1';
@@ -1110,12 +1128,14 @@ public sealed partial class PremioController : ControllerBase
                                     }
                                     const placeholder = select.querySelector('option[value=""]');
                                     if (placeholder) placeholder.remove();
+                                    setTimeout(() => location.reload(), 1200);
                                 } else {
-                                    status.textContent = 'Error';
+                                    status.textContent = 'Error: ' + (saveJson.message || 'Failed');
                                     status.style.color = '#ef4444';
                                 }
                             } catch (err) {
-                                status.textContent = 'Error';
+                                console.error('[Premio] Save stream error:', err);
+                                status.textContent = 'Error: ' + err.message;
                                 status.style.color = '#ef4444';
                             } finally {
                                 select.disabled = false;
@@ -1203,6 +1223,9 @@ public sealed partial class PremioController : ControllerBase
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Stream resolution failed for '{Guid}': {ErrorMessage}")]
     private static partial void LogStreamResolutionFailed(ILogger logger, Guid guid, string errorMessage);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Premio: >>> AddStream received for '{Title}' (Season {Season}, Episode {Episode}, InfoHash: {InfoHash}, ItemId: {ItemId}) <<<")]
+    private static partial void LogAddStreamReceived(ILogger logger, string title, int season, int episode, string infoHash, string itemId);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Premio: Failed to add stream for '{Title}': {ErrorMessage}")]
     private static partial void LogAddStreamFailed(ILogger logger, string title, string errorMessage);
