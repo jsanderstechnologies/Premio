@@ -460,12 +460,23 @@ public sealed partial class PremioController : ControllerBase
                 }
 
                 var series = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
-                if (string.IsNullOrWhiteSpace(request.Title))
+                var resolvedShowTitle = ep.SeriesName ?? series?.Name;
+                if (!string.IsNullOrWhiteSpace(resolvedShowTitle))
                 {
-                    request.Title = ep.SeriesName ?? series?.Name ?? ep.Name;
+                    request.Title = resolvedShowTitle;
+                }
+                else if (string.IsNullOrWhiteSpace(request.Title))
+                {
+                    request.Title = ep.Name;
                 }
 
                 request.Year ??= series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? ep.ProductionYear?.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (libItem is Series ser)
+            {
+                request.IsTv = true;
+                request.Title = ser.Name;
+                request.Year ??= ser.ProductionYear?.ToString(CultureInfo.InvariantCulture);
             }
             else if (libItem is not null && string.IsNullOrWhiteSpace(request.Title))
             {
@@ -547,6 +558,7 @@ public sealed partial class PremioController : ControllerBase
             if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var itemGuid) && !string.IsNullOrWhiteSpace(request.InfoHash))
             {
                 PremioMetadataCache.RegisterStreamHash(itemGuid, request.InfoHash);
+                PremioMetadataCache.RegisterChosenEpisodeStream(itemGuid, request.InfoHash);
             }
 
             // Construct clean media filename
@@ -555,6 +567,9 @@ public sealed partial class PremioController : ControllerBase
                 : (!string.IsNullOrWhiteSpace(request.Year) ? $"{request.Title} ({request.Year})" : request.Title);
 
             string? strmPath = null;
+            var contentToWrite = !string.IsNullOrWhiteSpace(request.InfoHash)
+                ? $"{streamUrl}{Environment.NewLine}# Premio: infoHash={request.InfoHash}"
+                : streamUrl;
 
             // 1. If itemId is provided, write directly to Jellyfin's exact episode item path
             if (!string.IsNullOrWhiteSpace(request.ItemId) && Guid.TryParse(request.ItemId, out var targetItemGuid))
@@ -562,9 +577,21 @@ public sealed partial class PremioController : ControllerBase
                 var libraryItem = _libraryManager.GetItemById(targetItemGuid);
                 if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
                 {
-                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
+                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
                     strmPath = libraryItem.Path;
                     LogAddedStream(_logger, formattedTitle, strmPath);
+
+                    if (!string.IsNullOrWhiteSpace(request.InfoHash))
+                    {
+                        try
+                        {
+                            await System.IO.File.WriteAllTextAsync(libraryItem.Path + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Ignore sidecar write exceptions
+                        }
+                    }
                 }
             }
 
@@ -588,6 +615,22 @@ public sealed partial class PremioController : ControllerBase
                     episodeNumber: 1,
                     forceOverwrite: true,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(writtenPath) && System.IO.File.Exists(writtenPath))
+            {
+                await System.IO.File.WriteAllTextAsync(writtenPath, contentToWrite, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(request.InfoHash))
+                {
+                    try
+                    {
+                        await System.IO.File.WriteAllTextAsync(writtenPath + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore sidecar write exceptions
+                    }
+                }
+            }
 
             strmPath ??= writtenPath;
 
@@ -1132,18 +1175,34 @@ public sealed partial class PremioController : ControllerBase
                     }
                     if (!itemId) {
                         const hash = window.location.hash || '';
+                        if (hash.includes('?')) {
+                            const hashParams = new URLSearchParams(hash.split('?')[1]);
+                            itemId = hashParams.get('id') || '';
+                        }
+                    }
+                    if (!itemId) {
                         const search = window.location.search || '';
-                        const queryStr = search || (hash.includes('?') ? '?' + hash.split('?')[1] : '');
-                        const urlParams = new URLSearchParams(queryStr);
-                        itemId = urlParams.get('id') || '';
+                        if (search.includes('?')) {
+                            const searchParams = new URLSearchParams(search);
+                            itemId = searchParams.get('id') || '';
+                        }
                     }
 
-                    const title = el.getAttribute('data-title') || '';
-                    const year = el.getAttribute('data-year') || '';
-                    const sRaw = el.getAttribute('data-season');
-                    const eRaw = el.getAttribute('data-episode');
+                    let title = el.getAttribute('data-title') || '';
+                    let year = el.getAttribute('data-year') || '';
+                    let sRaw = el.getAttribute('data-season');
+                    let eRaw = el.getAttribute('data-episode');
+
+                    const opt = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+                    if (opt) {
+                        if (!title && opt.getAttribute('data-title')) title = opt.getAttribute('data-title');
+                        if (!sRaw && opt.getAttribute('data-season')) sRaw = opt.getAttribute('data-season');
+                        if (!eRaw && opt.getAttribute('data-episode')) eRaw = opt.getAttribute('data-episode');
+                    }
+
                     const season = sRaw ? parseInt(sRaw, 10) : null;
                     const episode = eRaw ? parseInt(eRaw, 10) : null;
+                    const isTv = !!(season || episode || el.getAttribute('data-season') || (el.getAttribute('data-istv') === 'true'));
 
                     const tok = (window.ApiClient && typeof ApiClient.accessToken === 'function') ? ApiClient.accessToken() : '';
                     let apiUrl = '/Premio/AddStream';
@@ -1161,7 +1220,7 @@ public sealed partial class PremioController : ControllerBase
                                 itemId: itemId,
                                 title: title,
                                 year: year,
-                                isTv: true,
+                                isTv: isTv,
                                 season: season,
                                 episode: episode,
                                 infoHash: val

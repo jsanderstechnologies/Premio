@@ -186,4 +186,38 @@ public static class PremioMetadataCache
         var key = $"{showTitle.Trim()}:{season}:{episode}";
         return EpisodeChosenHashMap.TryGetValue(key, out infoHash);
     }
+
+    private static readonly ConcurrentDictionary<Guid, string> ItemChosenHashMap = new();
+
+    /// <summary>
+    /// Registers the chosen torrent infohash for a specific item GUID.
+    /// </summary>
+    /// <param name="itemId">Item GUID.</param>
+    /// <param name="infoHash">Torrent infohash.</param>
+    public static void RegisterChosenEpisodeStream(Guid itemId, string infoHash)
+    {
+        if (itemId == Guid.Empty || string.IsNullOrWhiteSpace(infoHash))
+        {
+            return;
+        }
+
+        ItemChosenHashMap[itemId] = infoHash;
+    }
+
+    /// <summary>
+    /// Attempts to retrieve the chosen torrent infohash for a specific item GUID.
+    /// </summary>
+    /// <param name="itemId">Item GUID.</param>
+    /// <param name="infoHash">Output torrent infohash.</param>
+    /// <returns><c>true</c> if found; otherwise, <c>false</c>.</returns>
+    public static bool TryGetChosenEpisodeStream(Guid itemId, out string? infoHash)
+    {
+        if (itemId == Guid.Empty)
+        {
+            infoHash = null;
+            return false;
+        }
+
+        return ItemChosenHashMap.TryGetValue(itemId, out infoHash);
+    }
 }

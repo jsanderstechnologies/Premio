@@ -631,15 +631,40 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var isTv = itemDto.Type == BaseItemKind.Episode;
             var seasonNumber = isTv ? (itemDto.ParentIndexNumber ?? 1) : 1;
             var episodeNumber = isTv ? (itemDto.IndexNumber ?? 1) : 1;
-            var searchTitle = isTv && !string.IsNullOrWhiteSpace(itemDto.SeriesName) ? itemDto.SeriesName : itemDto.Name;
+            string? seriesTitle = isTv ? itemDto.SeriesName : null;
             string? imdbId = null;
 
-            // 1. If TV episode, lookup parent series in LibraryManager to get IMDb/TMDB provider IDs
-            if (isTv && itemDto.SeriesId.HasValue)
+            // 1. If TV episode, lookup parent series in LibraryManager to get IMDb/TMDB provider IDs and accurate show title
+            if (isTv)
             {
-                var seriesItem = _libraryManager.GetItemById(itemDto.SeriesId.Value);
+                Series? seriesItem = null;
+                if (itemDto.SeriesId.HasValue && itemDto.SeriesId.Value != Guid.Empty)
+                {
+                    seriesItem = _libraryManager.GetItemById(itemDto.SeriesId.Value) as Series;
+                }
+
+                if (seriesItem is null && itemDto.Id != Guid.Empty)
+                {
+                    var epLookup = _libraryManager.GetItemById(itemDto.Id) as Episode;
+                    if (epLookup is not null)
+                    {
+                        seriesItem = epLookup.Series ?? (epLookup.SeriesId != Guid.Empty ? _libraryManager.GetItemById(epLookup.SeriesId) as Series : epLookup.FindParent<Series>());
+                        seriesTitle ??= epLookup.SeriesName;
+                        if (!itemDto.ParentIndexNumber.HasValue && (epLookup.AiredSeasonNumber.HasValue || epLookup.ParentIndexNumber.HasValue))
+                        {
+                            seasonNumber = epLookup.AiredSeasonNumber ?? epLookup.ParentIndexNumber ?? 1;
+                        }
+
+                        if (!itemDto.IndexNumber.HasValue && epLookup.IndexNumber.HasValue)
+                        {
+                            episodeNumber = epLookup.IndexNumber.Value;
+                        }
+                    }
+                }
+
                 if (seriesItem is not null)
                 {
+                    seriesTitle ??= seriesItem.Name;
                     imdbId = seriesItem.GetProviderId("Imdb");
                     if (string.IsNullOrWhiteSpace(imdbId) && int.TryParse(seriesItem.GetProviderId("Tmdb"), out var sTmdbId))
                     {
@@ -647,6 +672,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     }
                 }
             }
+
+            var searchTitle = isTv ? (seriesTitle ?? itemDto.SeriesName ?? itemDto.Name) : itemDto.Name;
 
             // 2. Check item's own ProviderIds
             if (string.IsNullOrWhiteSpace(imdbId) && itemDto.ProviderIds is not null)
@@ -696,14 +723,21 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             var hasRealChosenStream = false;
             string? chosenInfoHash = null;
 
-            // 1. Check in-memory chosen hash map
-            if (isTv && PremioMetadataCache.TryGetChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, out var memHash))
+            // 1. Check in-memory chosen hash map by ItemId
+            if (itemDto.Id != Guid.Empty && PremioMetadataCache.TryGetChosenEpisodeStream(itemDto.Id, out var idHash))
+            {
+                hasRealChosenStream = true;
+                chosenInfoHash = idHash;
+            }
+
+            // 2. Check in-memory chosen hash map by (searchTitle, seasonNumber, episodeNumber)
+            if (string.IsNullOrWhiteSpace(chosenInfoHash) && isTv && PremioMetadataCache.TryGetChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, out var memHash))
             {
                 hasRealChosenStream = true;
                 chosenInfoHash = memHash;
             }
 
-            // 2. Read the .strm file on disk for this episode to recall chosen stream
+            // 3. Read .premio sidecar or .strm file on disk for this episode to recall chosen stream
             var episodePath = itemDto.Path;
             if (string.IsNullOrWhiteSpace(episodePath) && itemDto.Id != Guid.Empty)
             {
@@ -711,30 +745,64 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 episodePath = epItem?.Path;
             }
 
-            if (!string.IsNullOrWhiteSpace(episodePath) && File.Exists(episodePath))
+            if (!string.IsNullOrWhiteSpace(episodePath))
             {
-                try
+                // 3a. Check sidecar .premio file
+                var sidecarPath = episodePath + ".premio";
+                if (File.Exists(sidecarPath))
                 {
-                    var fileContent = await File.ReadAllTextAsync(episodePath, cancellationToken).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(fileContent))
+                    try
                     {
-                        var trimmed = fileContent.Trim();
-                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
-                        if (hashMatch.Success)
+                        var sidecarContent = (await File.ReadAllTextAsync(sidecarPath, cancellationToken).ConfigureAwait(false))?.Trim();
+                        if (!string.IsNullOrWhiteSpace(sidecarContent) && sidecarContent.Length == 40 && Regex.IsMatch(sidecarContent, @"^[a-fA-F0-9]{40}$"))
                         {
                             hasRealChosenStream = true;
-                            chosenInfoHash = hashMatch.Groups[1].Value;
+                            chosenInfoHash = sidecarContent;
+                            if (itemDto.Id != Guid.Empty)
+                            {
+                                PremioMetadataCache.RegisterChosenEpisodeStream(itemDto.Id, chosenInfoHash);
+                            }
+
                             PremioMetadataCache.RegisterChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, chosenInfoHash);
                         }
-                        else if ((trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !trimmed.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase))
-                        {
-                            hasRealChosenStream = true;
-                        }
+                    }
+                    catch
+                    {
+                        // Ignore sidecar read exceptions
                     }
                 }
-                catch
+
+                // 3b. Read the .strm file on disk
+                if (string.IsNullOrWhiteSpace(chosenInfoHash) && File.Exists(episodePath))
                 {
-                    // Ignore disk read exceptions
+                    try
+                    {
+                        var fileContent = await File.ReadAllTextAsync(episodePath, cancellationToken).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(fileContent))
+                        {
+                            var trimmed = fileContent.Trim();
+                            var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                            if (hashMatch.Success)
+                            {
+                                hasRealChosenStream = true;
+                                chosenInfoHash = hashMatch.Groups[1].Value;
+                                if (itemDto.Id != Guid.Empty)
+                                {
+                                    PremioMetadataCache.RegisterChosenEpisodeStream(itemDto.Id, chosenInfoHash);
+                                }
+
+                                PremioMetadataCache.RegisterChosenEpisodeStream(searchTitle, seasonNumber, episodeNumber, chosenInfoHash);
+                            }
+                            else if ((trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !trimmed.Contains("/Premio/Stream?type=tv", StringComparison.OrdinalIgnoreCase))
+                            {
+                                hasRealChosenStream = true;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore disk read exceptions
+                    }
                 }
             }
 
@@ -989,6 +1057,27 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             isRealInfoHash = true;
         }
 
+        if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
+        {
+            var sidecarPath = libItem.Path + ".premio";
+            if (File.Exists(sidecarPath))
+            {
+                try
+                {
+                    var sidecar = (await File.ReadAllTextAsync(sidecarPath, cancellationToken).ConfigureAwait(false))?.Trim();
+                    if (!string.IsNullOrWhiteSpace(sidecar) && sidecar.Length == 40 && Regex.IsMatch(sidecar, @"^[a-fA-F0-9]{40}$"))
+                    {
+                        mediaSourceId = sidecar;
+                        isRealInfoHash = true;
+                    }
+                }
+                catch
+                {
+                    // Ignore sidecar exceptions
+                }
+            }
+        }
+
         if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
         {
             try
@@ -999,7 +1088,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 {
                     if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
                     {
-                        return trimmed;
+                        var firstLine = trimmed.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+                        return firstLine;
                     }
 
                     var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
@@ -1077,13 +1167,32 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             if (isTv)
             {
                 PremioMetadataCache.RegisterChosenEpisodeStream(resolvedTitle, season, episode, mediaSourceId);
+                if (requestedId != Guid.Empty)
+                {
+                    PremioMetadataCache.RegisterChosenEpisodeStream(requestedId, mediaSourceId);
+                }
             }
+
+            var contentToWrite = !string.IsNullOrWhiteSpace(mediaSourceId)
+                ? $"{streamUrl}{Environment.NewLine}# Premio: infoHash={mediaSourceId}"
+                : streamUrl;
 
             // 2. Write direct URL straight to the episode's existing .strm file if in library!
             if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
             {
-                await File.WriteAllTextAsync(libItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(libItem.Path, contentToWrite, cancellationToken).ConfigureAwait(false);
                 LogAddedStream(_logger, isTv ? $"{resolvedTitle} - S{season:D2}E{episode:D2}" : resolvedTitle, libItem.Path);
+                if (!string.IsNullOrWhiteSpace(mediaSourceId))
+                {
+                    try
+                    {
+                        await File.WriteAllTextAsync(libItem.Path + ".premio", mediaSourceId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore sidecar write exceptions
+                    }
+                }
             }
 
             // 3. Also write/update via StrmFileService
