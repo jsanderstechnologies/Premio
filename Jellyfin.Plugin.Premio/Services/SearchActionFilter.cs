@@ -321,10 +321,16 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     if (libItem is not null)
                     {
                         var isTv = libItem is Series || libItem is Episode;
+                        var title = libItem.Name;
+                        if (libItem is Episode ep)
+                        {
+                            title = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Series?.Name ?? libItem.Name;
+                        }
+
                         cachedItem = new TmdbItem
                         {
                             Id = 0,
-                            Title = libItem.Name,
+                            Title = title,
                             MediaType = isTv ? "tv" : "movie",
                             ReleaseDate = libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture)
                         };
@@ -755,7 +761,12 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             foreach (var stream in streams)
             {
                 var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
-                var label = $"{stream.CleanReleaseName}{sizeStr}";
+                var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
+                var label = isTv
+                    ? (stream.CleanReleaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase)
+                        ? $"{stream.CleanReleaseName}{sizeStr}"
+                        : $"{searchTitle} - {epCode} - {stream.Quality}{sizeStr} - {stream.CleanReleaseName}")
+                    : $"{stream.CleanReleaseName}{sizeStr}";
                 var rawHash = stream.InfoHash ?? string.Empty;
                 var streamGuid = GenerateDeterministicGuid($"stream:{itemDto.Id}:{rawHash}");
                 PremioMetadataCache.Register(streamGuid, syntheticItemForStreams);
@@ -921,70 +932,81 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
         // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
         var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
 
-        var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
+        BaseItem? libItem = requestedId != Guid.Empty ? _libraryManager.GetItemById(requestedId) : null;
+        var isTv = string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase) || libItem is Episode || libItem is Series;
         var season = 1;
         var episode = 1;
 
-        if (context.HttpContext.Request.Query.TryGetValue("SeasonNumber", out var sStr) && int.TryParse(sStr, out var sVal))
+        if (libItem is Episode ep)
         {
-            season = sVal;
-        }
-        else if (context.HttpContext.Request.Query.TryGetValue("season", out var sStr2) && int.TryParse(sStr2, out var sVal2))
-        {
-            season = sVal2;
-        }
-
-        if (context.HttpContext.Request.Query.TryGetValue("EpisodeNumber", out var eStr) && int.TryParse(eStr, out var eVal))
-        {
-            episode = eVal;
-        }
-        else if (context.HttpContext.Request.Query.TryGetValue("episode", out var eStr2) && int.TryParse(eStr2, out var eVal2))
-        {
-            episode = eVal2;
-        }
-
-        if (!isRealInfoHash && requestedId != Guid.Empty)
-        {
-            var libItem = _libraryManager.GetItemById(requestedId);
-            if (libItem is Episode ep)
+            isTv = true;
+            season = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? season);
+            episode = ep.IndexNumber ?? episode;
+            var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? ep.Series?.Name;
+            if (!string.IsNullOrWhiteSpace(showTitle))
             {
-                isTv = true;
-                season = ep.AiredSeasonNumber ?? (ep.ParentIndexNumber ?? season);
-                episode = ep.IndexNumber ?? episode;
-                var showTitle = ep.SeriesName ?? ep.FindParent<Series>()?.Name ?? item.DisplayTitle;
-
-                if (!string.IsNullOrWhiteSpace(showTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(showTitle, season, episode, out var chosenHash))
-                {
-                    mediaSourceId = chosenHash;
-                    isRealInfoHash = true;
-                }
+                item.Title = showTitle;
+            }
+        }
+        else if (isTv)
+        {
+            if (context.HttpContext.Request.Query.TryGetValue("SeasonNumber", out var sStr) && int.TryParse(sStr, out var sVal))
+            {
+                season = sVal;
+            }
+            else if (context.HttpContext.Request.Query.TryGetValue("season", out var sStr2) && int.TryParse(sStr2, out var sVal2))
+            {
+                season = sVal2;
             }
 
-            if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
+            if (context.HttpContext.Request.Query.TryGetValue("EpisodeNumber", out var eStr) && int.TryParse(eStr, out var eVal))
             {
-                try
-                {
-                    var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
-                    var trimmed = fileContent?.Trim() ?? string.Empty;
-                    if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return trimmed;
-                        }
+                episode = eVal;
+            }
+            else if (context.HttpContext.Request.Query.TryGetValue("episode", out var eStr2) && int.TryParse(eStr2, out var eVal2))
+            {
+                episode = eVal2;
+            }
+        }
 
-                        var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
-                        if (hashMatch.Success)
-                        {
-                            mediaSourceId = hashMatch.Groups[1].Value;
-                            isRealInfoHash = true;
-                        }
+        if (!string.IsNullOrWhiteSpace(mediaSourceId) && Guid.TryParse(mediaSourceId, out var parsedMediaGuid) && PremioMetadataCache.TryGetStreamHash(parsedMediaGuid, out var mappedHash))
+        {
+            mediaSourceId = mappedHash;
+        }
+
+        // If mediaSourceId is not a valid 40-char torrent infohash (e.g. item ID, select_stream, null, or GUID without mapped hash), fetch best stream from Torrentio
+        var isRealInfoHash = !string.IsNullOrWhiteSpace(mediaSourceId) && mediaSourceId.Length == 40 && !string.Equals(mediaSourceId, requestedId.ToString("N"), StringComparison.OrdinalIgnoreCase);
+
+        if (!isRealInfoHash && isTv && !string.IsNullOrWhiteSpace(item.DisplayTitle) && PremioMetadataCache.TryGetChosenEpisodeStream(item.DisplayTitle, season, episode, out var chosenHash))
+        {
+            mediaSourceId = chosenHash;
+            isRealInfoHash = true;
+        }
+
+        if (!isRealInfoHash && libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path) && File.Exists(libItem.Path))
+        {
+            try
+            {
+                var fileContent = await File.ReadAllTextAsync(libItem.Path, cancellationToken).ConfigureAwait(false);
+                var trimmed = fileContent?.Trim() ?? string.Empty;
+                if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!trimmed.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return trimmed;
+                    }
+
+                    var hashMatch = Regex.Match(trimmed, @"infoHash=([a-fA-F0-9]{40})", RegexOptions.IgnoreCase);
+                    if (hashMatch.Success)
+                    {
+                        mediaSourceId = hashMatch.Groups[1].Value;
+                        isRealInfoHash = true;
                     }
                 }
-                catch
-                {
-                    // Ignore file read exceptions
-                }
+            }
+            catch
+            {
+                // Ignore file read exceptions
             }
         }
 
@@ -1043,7 +1065,14 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             LogStreamResolved(_logger, item.DisplayTitle, mediaSourceId, streamUrl);
 
-            // 2. Write corresponding .strm file and save poster to Jellyfin Library
+            // 2. Write direct URL straight to the episode's existing .strm file if in library!
+            if (libItem is not null && !string.IsNullOrWhiteSpace(libItem.Path))
+            {
+                await File.WriteAllTextAsync(libItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
+                LogAddedStream(_logger, isTv ? $"{item.DisplayTitle} - S{season:D2}E{episode:D2}" : item.DisplayTitle, libItem.Path);
+            }
+
+            // 3. Also write/update via StrmFileService
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
                 item.DisplayTitle,
                 item.Year,

@@ -223,13 +223,6 @@ public sealed partial class PremioController : ControllerBase
             // 1. Send magnet to Premiumize
             await _premiumizeClient.CreateTransferAsync(targetHash, cancellationToken).ConfigureAwait(false);
             var directDl = await _premiumizeClient.CreateDirectDownloadAsync(targetHash, cancellationToken).ConfigureAwait(false);
-            var streamUrl = ResolvePlayableStreamUrl(directDl);
-
-            if (string.IsNullOrWhiteSpace(streamUrl))
-            {
-                return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
-            }
-
             var isTvShow = string.Equals(type, "tv", StringComparison.OrdinalIgnoreCase) ||
                            season.HasValue ||
                            string.Equals(cachedItem?.MediaType, "tv", StringComparison.OrdinalIgnoreCase);
@@ -237,6 +230,26 @@ public sealed partial class PremioController : ControllerBase
             var resolvedYear = !string.IsNullOrWhiteSpace(year) ? year : cachedItem?.Year;
             var targetSeason = season ?? 1;
             var targetEpisode = episode ?? 1;
+
+            var streamUrl = ResolvePlayableStreamUrl(directDl, isTvShow ? targetSeason : null, isTvShow ? targetEpisode : null);
+
+            if (string.IsNullOrWhiteSpace(streamUrl))
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not resolve stream URL from Premiumize." });
+            }
+
+            LogStreamResolved(_logger, resolvedTitle, targetHash, streamUrl);
+
+            // Write direct stream URL to the episode's actual file on disk if in library
+            if (requestedGuid != Guid.Empty)
+            {
+                var libraryItem = _libraryManager.GetItemById(requestedGuid);
+                if (libraryItem is not null && !string.IsNullOrWhiteSpace(libraryItem.Path))
+                {
+                    await System.IO.File.WriteAllTextAsync(libraryItem.Path, streamUrl, cancellationToken).ConfigureAwait(false);
+                    LogAddedStream(_logger, isTvShow ? $"{resolvedTitle} - S{targetSeason:D2}E{targetEpisode:D2}" : resolvedTitle, libraryItem.Path);
+                }
+            }
 
             // 2. Write .strm file & poster
             var strmPath = await _strmService.WriteMediaStrmFileAsync(
