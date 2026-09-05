@@ -318,47 +318,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
 
             if (requestedId != Guid.Empty)
             {
-                if (!PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) || cachedItem is null)
-                {
-                    var libItem = _libraryManager.GetItemById(requestedId);
-                    if (libItem is not null)
-                    {
-                        var isTv = libItem is Series || libItem is Episode;
-                        var title = libItem.Name;
-                        var year = libItem.ProductionYear?.ToString(CultureInfo.InvariantCulture);
-                        var tmdbId = 0;
-
-                        if (libItem is Episode ep)
-                        {
-                            var series = ep.Series ?? (ep.SeriesId != Guid.Empty ? _libraryManager.GetItemById(ep.SeriesId) as Series : ep.FindParent<Series>());
-                            title = ep.SeriesName ?? series?.Name ?? libItem.Name;
-                            year = series?.ProductionYear?.ToString(CultureInfo.InvariantCulture) ?? year;
-                            if (series is not null && int.TryParse(series.GetProviderId("Tmdb"), out var sTmdbId))
-                            {
-                                tmdbId = sTmdbId;
-                            }
-                            else if (int.TryParse(ep.GetProviderId("Tmdb"), out var epTmdbId))
-                            {
-                                tmdbId = epTmdbId;
-                            }
-                        }
-                        else if (int.TryParse(libItem.GetProviderId("Tmdb"), out var itemTmdbId))
-                        {
-                            tmdbId = itemTmdbId;
-                        }
-
-                        cachedItem = new TmdbItem
-                        {
-                            Id = tmdbId,
-                            Title = title,
-                            MediaType = isTv ? "tv" : "movie",
-                            ReleaseDate = year
-                        };
-                        PremioMetadataCache.Register(requestedId, cachedItem);
-                    }
-                }
-
-                if (cachedItem is not null)
+                if (PremioMetadataCache.TryGetItem(requestedId, out var cachedItem) && cachedItem is not null)
                 {
                     LogResolvingItemForPlayback(_logger, cachedItem.DisplayTitle);
                     if (requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
@@ -851,7 +811,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 MediaType = isTv ? "tv" : "movie",
                 ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
             };
-            PremioMetadataCache.Register(itemDto.Id, syntheticItemForStreams);
 
             if (streams.Count > 0)
             {
@@ -1241,15 +1200,15 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Path = streamUrl,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
-                    Container = "mkv",
+                    Container = "mp4",
                     VideoType = VideoType.VideoFile,
                     IsRemote = true,
                     SupportsDirectPlay = true,
                     SupportsDirectStream = true,
-                    SupportsTranscoding = true,
+                    SupportsTranscoding = false,
                     MediaStreams = new[]
                     {
-                        new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "hevc", IsDefault = true },
+                        new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
                         new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
                     }
                 }
