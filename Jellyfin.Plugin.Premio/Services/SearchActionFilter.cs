@@ -358,8 +358,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     }
                 }
 
-                var isLibraryItem = _libraryManager.GetItemById(requestedId) is not null;
-                if (cachedItem is not null && !isLibraryItem)
+                if (cachedItem is not null)
                 {
                     LogResolvingItemForPlayback(_logger, cachedItem.DisplayTitle);
                     if (requestPath.Contains("/stream", StringComparison.OrdinalIgnoreCase))
@@ -420,26 +419,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var tasks = queryResult.Items.Select(ep => EnrichExistingLibraryItemDtoAsync(ep, cancellationToken));
                     await Task.WhenAll(tasks).ConfigureAwait(false);
                 }
-            }
-
-            if (objResult.Value is PlaybackInfoResponse playbackResp)
-            {
-                var reqId = ExtractItemId(context);
-                if (reqId != Guid.Empty && PremioMetadataCache.TryGetItem(reqId, out var pItem) && pItem is not null)
-                {
-                    foreach (var src in playbackResp.MediaSources)
-                    {
-                        if (src.Path is not null && src.Path.Contains("/Premio/Stream", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var streamUrl = await ResolveDirectStreamUrlAsync(context, pItem, cancellationToken).ConfigureAwait(false);
-                            if (!string.IsNullOrWhiteSpace(streamUrl))
-                            {
-                                src.Path = streamUrl;
-                            }
-                        }
-                    }
-                }
-                return;
             }
         }
 
