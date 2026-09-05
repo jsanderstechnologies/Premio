@@ -1283,7 +1283,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     Path = streamUrl,
                     Protocol = MediaProtocol.Http,
                     Type = MediaSourceType.Default,
-                    Container = "mp4",
+                    Container = "mkv,mp4",
                     VideoType = VideoType.VideoFile,
                     IsRemote = true,
                     SupportsDirectPlay = true,
@@ -1291,8 +1291,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     SupportsTranscoding = true,
                     MediaStreams = new[]
                     {
-                        new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
-                        new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
+                        new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264,hevc", IsDefault = true },
+                        new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac,ac3,eac3", IsDefault = true }
                     }
                 }
             },
