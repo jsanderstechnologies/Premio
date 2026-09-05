@@ -817,6 +817,35 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 }
             }
 
+            if (hasRealChosenStream && !string.IsNullOrWhiteSpace(chosenInfoHash))
+            {
+                var found = false;
+                for (var i = 0; i < streams.Count; i++)
+                {
+                    if (string.Equals(streams[i].InfoHash, chosenInfoHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    var injectedStream = new TorrentioStreamResult
+                    {
+                        InfoHash = chosenInfoHash,
+                        Title = "Saved Stream (Direct Link)",
+                        CleanReleaseName = "Saved Stream (Direct Link)",
+                        Quality = "Saved",
+                        IsCached = true
+                    };
+                    
+                    var newStreams = new List<TorrentioStreamResult> { injectedStream };
+                    newStreams.AddRange(streams);
+                    streams = newStreams;
+                }
+            }
+
             var syntheticItemForStreams = new TmdbItem
             {
                 Id = 0,
@@ -1152,6 +1181,22 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 episode,
                 forceOverwrite: true,
                 cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(strmPath) && File.Exists(strmPath))
+            {
+                await File.WriteAllTextAsync(strmPath, contentToWrite, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(mediaSourceId))
+                {
+                    try
+                    {
+                        await File.WriteAllTextAsync(strmPath + ".premio", mediaSourceId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Ignore sidecar write exceptions
+                    }
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(strmPath) && item.PosterUrl is not null)
             {
