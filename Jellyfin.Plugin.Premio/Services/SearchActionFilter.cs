@@ -712,13 +712,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 return;
             }
 
-            var mediaSources = new List<MediaSourceInfo>();
 
-            var defaultStreams = new[]
-            {
-                new MediaStream { Type = MediaStreamType.Video, Index = 0, Codec = "h264", IsDefault = true },
-                new MediaStream { Type = MediaStreamType.Audio, Index = 1, Codec = "aac", IsDefault = true }
-            };
 
             var hasRealChosenStream = false;
             string? chosenInfoHash = null;
@@ -823,36 +817,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 }
             }
 
-            if (mediaSources.Count == 0)
-            {
-                var defaultStreamGuid = GenerateDeterministicGuid($"select_stream:{itemDto.Id}");
-                var syntheticItem = new TmdbItem
-                {
-                    Id = 0,
-                    Title = itemDto.Name,
-                    MediaType = isTv ? "tv" : "movie",
-                    ReleaseDate = itemDto.ProductionYear?.ToString(CultureInfo.InvariantCulture)
-                };
-                PremioMetadataCache.Register(defaultStreamGuid, syntheticItem);
-                var defaultStreamId = defaultStreamGuid.ToString("N");
-
-                mediaSources.Add(new MediaSourceInfo
-                {
-                    Id = defaultStreamId,
-                    Name = "Select a Stream",
-                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={defaultStreamId}",
-                    Protocol = MediaProtocol.Http,
-                    Type = MediaSourceType.Default,
-                    Container = "mp4",
-                    VideoType = VideoType.VideoFile,
-                    IsRemote = true,
-                    SupportsDirectPlay = true,
-                    SupportsDirectStream = true,
-                    SupportsTranscoding = true,
-                    MediaStreams = defaultStreams.ToList()
-                });
-            }
-
             var syntheticItemForStreams = new TmdbItem
             {
                 Id = 0,
@@ -862,63 +826,7 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
             };
             PremioMetadataCache.Register(itemDto.Id, syntheticItemForStreams);
 
-            foreach (var stream in streams)
-            {
-                var sizeStr = !string.IsNullOrWhiteSpace(stream.FileSize) ? $" ({stream.FileSize})" : string.Empty;
-                var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
-                var label = isTv
-                    ? (stream.CleanReleaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase)
-                        ? $"{stream.CleanReleaseName}{sizeStr}"
-                        : $"{searchTitle} - {epCode} - {stream.Quality}{sizeStr} - {stream.CleanReleaseName}")
-                    : $"{stream.CleanReleaseName}{sizeStr}";
-                var rawHash = stream.InfoHash ?? string.Empty;
-                var streamGuid = GenerateDeterministicGuid($"stream:{itemDto.Id}:{rawHash}");
-                PremioMetadataCache.Register(streamGuid, syntheticItemForStreams);
-                if (!string.IsNullOrWhiteSpace(rawHash))
-                {
-                    PremioMetadataCache.RegisterStreamHash(streamGuid, rawHash);
-                }
-
-                var streamId = streamGuid.ToString("N");
-
-                mediaSources.Add(new MediaSourceInfo
-                {
-                    Id = streamId,
-                    Name = label,
-                    Path = $"/Premio/Stream/{itemDto.Id}?mediaSourceId={streamId}&infoHash={rawHash}&type={(isTv ? "tv" : "movie")}&imdbId={Uri.EscapeDataString(imdbId)}&season={seasonNumber}&episode={episodeNumber}&title={Uri.EscapeDataString(searchTitle)}&year={itemYear ?? string.Empty}",
-                    Protocol = MediaProtocol.Http,
-                    Type = MediaSourceType.Default,
-                    Container = "mp4",
-                    VideoType = VideoType.VideoFile,
-                    IsRemote = true,
-                    SupportsDirectPlay = true,
-                    SupportsDirectStream = true,
-                    SupportsTranscoding = true,
-                    MediaStreams = defaultStreams.ToList()
-                });
-            }
-
-            if (hasRealChosenStream)
-            {
-                mediaSources.RemoveAll(m => m.Name == "Select a Stream" || m.Path.Contains("select_stream", StringComparison.OrdinalIgnoreCase));
-
-                if (!string.IsNullOrWhiteSpace(chosenInfoHash))
-                {
-                    var chosenIdx = mediaSources.FindIndex(m => m.Path != null && m.Path.Contains(chosenInfoHash, StringComparison.OrdinalIgnoreCase));
-                    if (chosenIdx > 0)
-                    {
-                        var chosenSource = mediaSources[chosenIdx];
-                        mediaSources.RemoveAt(chosenIdx);
-                        mediaSources.Insert(0, chosenSource);
-                    }
-                }
-            }
-
-            itemDto.Container = "mp4";
-            itemDto.MediaStreams = defaultStreams;
-            itemDto.MediaSources = mediaSources.ToArray();
-
-            if (isTv && streams.Count > 0)
+            if (streams.Count > 0)
             {
                 var sbDropdown = new StringBuilder();
                 var encodedTitle = WebUtility.HtmlEncode(searchTitle ?? "Show");
@@ -935,8 +843,8 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                 sbDropdown.Append("data-itemid=\"").Append(itemIdStr).Append("\" ");
                 sbDropdown.Append("data-title=\"").Append(encodedTitle).Append("\" ");
                 sbDropdown.Append("data-year=\"").Append(encodedYear).Append("\" ");
-                sbDropdown.Append("data-season=\"").Append(seasonStr).Append("\" ");
-                sbDropdown.Append("data-episode=\"").Append(episodeStr).Append("\" ");
+                sbDropdown.Append("data-season=\"").Append(isTv ? seasonStr : "").Append("\" ");
+                sbDropdown.Append("data-episode=\"").Append(isTv ? episodeStr : "").Append("\" ");
                 sbDropdown.Append("onchange=\"if(window.premioAddStream){window.premioAddStream(this);}\">");
 
                 if (!hasRealChosenStream)
@@ -949,16 +857,23 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     var st = streams[sIdx];
                     var sz = !string.IsNullOrWhiteSpace(st.FileSize) ? $" ({st.FileSize})" : string.Empty;
 
-                    var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
-                    var releaseName = st.CleanReleaseName;
                     string text;
-                    if (releaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase))
+                    if (isTv)
                     {
-                        text = $"{releaseName}{sz}";
+                        var epCode = $"S{seasonNumber:D2}E{episodeNumber:D2}";
+                        var releaseName = st.CleanReleaseName;
+                        if (releaseName.Contains(epCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            text = $"{releaseName}{sz}";
+                        }
+                        else
+                        {
+                            text = $"{searchTitle} - {epCode} - {st.Quality}{sz} - {releaseName}";
+                        }
                     }
                     else
                     {
-                        text = $"{searchTitle} - {epCode} - {st.Quality}{sz} - {releaseName}";
+                        text = $"{st.CleanReleaseName}{sz}";
                     }
 
                     var isSelected = false;
