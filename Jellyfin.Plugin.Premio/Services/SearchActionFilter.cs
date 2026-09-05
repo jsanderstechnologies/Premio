@@ -835,8 +835,6 @@ public sealed partial class SearchActionFilter : IAsyncActionFilter
                     {
                         InfoHash = chosenInfoHash,
                         Title = "Saved Stream (Direct Link)",
-                        CleanReleaseName = "Saved Stream (Direct Link)",
-                        Quality = "Saved",
                         IsCached = true
                     };
                     
