@@ -676,39 +676,43 @@ public sealed partial class PremioController : ControllerBase
                 }
             }
 
-            // 2. Also write/update via StrmFileService with forceOverwrite: true
-            var writtenPath = request.IsTv && request.Season.HasValue && request.Episode.HasValue
-                ? await _strmService.WriteMediaStrmFileAsync(
-                    request.Title,
-                    request.Year,
-                    new Uri(streamUrl, UriKind.RelativeOrAbsolute),
-                    isTvShow: true,
-                    seasonNumber: request.Season.Value,
-                    episodeNumber: request.Episode.Value,
-                    forceOverwrite: true,
-                    cancellationToken: cancellationToken).ConfigureAwait(false)
-                : await _strmService.WriteMediaStrmFileAsync(
-                    formattedTitle,
-                    request.Year,
-                    new Uri(streamUrl, UriKind.RelativeOrAbsolute),
-                    isTvShow: request.IsTv,
-                    seasonNumber: 1,
-                    episodeNumber: 1,
-                    forceOverwrite: true,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(writtenPath) && System.IO.File.Exists(writtenPath))
+            // 2. Only fallback to StrmFileService if we didn't find the exact library item file
+            string? writtenPath = null;
+            if (string.IsNullOrWhiteSpace(strmPath))
             {
-                await System.IO.File.WriteAllTextAsync(writtenPath, contentToWrite, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(request.InfoHash))
+                writtenPath = request.IsTv && request.Season.HasValue && request.Episode.HasValue
+                    ? await _strmService.WriteMediaStrmFileAsync(
+                        request.Title,
+                        request.Year,
+                        new Uri(streamUrl, UriKind.RelativeOrAbsolute),
+                        isTvShow: true,
+                        seasonNumber: request.Season.Value,
+                        episodeNumber: request.Episode.Value,
+                        forceOverwrite: true,
+                        cancellationToken: cancellationToken).ConfigureAwait(false)
+                    : await _strmService.WriteMediaStrmFileAsync(
+                        formattedTitle,
+                        request.Year,
+                        new Uri(streamUrl, UriKind.RelativeOrAbsolute),
+                        isTvShow: request.IsTv,
+                        seasonNumber: 1,
+                        episodeNumber: 1,
+                        forceOverwrite: true,
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                if (!string.IsNullOrWhiteSpace(writtenPath) && System.IO.File.Exists(writtenPath))
                 {
-                    try
+                    await System.IO.File.WriteAllTextAsync(writtenPath, contentToWrite, cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(request.InfoHash))
                     {
-                        await System.IO.File.WriteAllTextAsync(writtenPath + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        // Ignore sidecar write exceptions
+                        try
+                        {
+                            await System.IO.File.WriteAllTextAsync(writtenPath + ".premio", request.InfoHash, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Ignore sidecar write exceptions
+                        }
                     }
                 }
             }
